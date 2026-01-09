@@ -471,6 +471,11 @@ contract MultiDelegateToken is
         address _to,
         uint256 _tokenId
     ) internal override(ERC721SplitVotes) {
+        if (_from == _to) {
+            super._afterTokenTransfer(_from, _to, _tokenId);
+            return;
+        }
+
         address prevDelegate = tokenDelegates[_tokenId];
         if (prevDelegate != address(0)) {
             delete tokenDelegates[_tokenId];

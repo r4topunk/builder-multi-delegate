@@ -74,6 +74,29 @@ describe("MultiDelegateToken", () => {
     expect(await token.getVotes(bob.address)).to.equal(0);
   });
 
+  it("does not clear delegation on self-transfer", async () => {
+    const { token, auction, owner, alice } = await deployToken();
+
+    await token.connect(auction).mintTo(owner.address);
+    await token.connect(owner).delegateTokenIds(alice.address, [0]);
+    expect(await token.getVotes(alice.address)).to.equal(1);
+
+    await token.connect(owner).transferFrom(owner.address, owner.address, 0);
+    expect(await token.getVotes(alice.address)).to.equal(1);
+  });
+
+  it("does not allow approved operator to clear delegation via self-transfer", async () => {
+    const { token, auction, owner, alice, bob } = await deployToken();
+
+    await token.connect(auction).mintTo(owner.address);
+    await token.connect(owner).delegateTokenIds(alice.address, [0]);
+    expect(await token.getVotes(alice.address)).to.equal(1);
+
+    await token.connect(owner).approve(bob.address, 0);
+    await token.connect(bob).transferFrom(owner.address, owner.address, 0);
+    expect(await token.getVotes(alice.address)).to.equal(1);
+  });
+
   it("clears delegation explicitly", async () => {
     const { token, auction, owner, alice } = await deployToken();
 
