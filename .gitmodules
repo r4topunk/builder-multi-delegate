@@ -1,0 +1,6 @@
+[submodule "lib/nouns-builder"]
+	path = lib/nouns-builder
+	url = https://github.com/BuilderOSS/nouns-builder
+[submodule "lib/nouns-protocol"]
+	path = lib/nouns-protocol
+	url = https://github.com/BuilderOSS/nouns-protocol
