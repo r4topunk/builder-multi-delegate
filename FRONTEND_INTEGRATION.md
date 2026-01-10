@@ -3,10 +3,11 @@
 This guide explains how to integrate split delegation (per tokenId) into the Gnars frontend.
 
 ## Overview
-- Governance votes are counted only after explicit delegation.
+- Votes auto-delegate to the token owner on mint and transfer.
 - Delegation is per tokenId (1 NFT = 1 vote).
-- Delegation is cleared on transfer.
+- Explicit delegation overrides auto-delegation; clearing returns votes to the owner.
 - Legacy `delegate` and `delegateBySig` are disabled.
+- Approved ERC-721 operators (per-token or `setApprovalForAll`) can delegate/clear on behalf of owners.
 
 ## Contract Addresses (Gnars on Base)
 - Token (ERC-721): `0x880fb3cf5c6cc2d7dfc13a993e839a9411200c17`
@@ -44,6 +45,7 @@ function tokenDelegate(uint256 tokenId) external view returns (address);
 function getVotes(address account) external view returns (uint256);
 function getPastVotes(address account, uint256 timestamp) external view returns (uint256);
 ```
+Note: `getPastVotes` can revert with `CHECKPOINTS_PRUNED` if the timestamp is older than the retained checkpoint window.
 
 ## Example Calls (ethers v6)
 ```ts
@@ -62,9 +64,10 @@ const votes = await token.getVotes(delegatee);
 ```
 
 ## UX Notes
-- Delegation does not count until explicitly set by the owner.
-- After transfer, delegation for that tokenId is cleared.
+- Votes are available immediately on mint/transfer via auto-delegation to the owner.
+- After transfer, explicit delegation for that tokenId is cleared and votes move to the new owner.
 - For split delegation, show the user how many tokenIds are delegated to each address.
+- Historical vote queries retain a sliding window of the most recent 1000 checkpoints per delegate.
 
 ## Upgrade Notes
 - The new token implementation must be registered by the Builder manager and upgraded via Governor/Executor.

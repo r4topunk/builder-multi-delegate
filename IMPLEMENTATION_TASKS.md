@@ -4,7 +4,7 @@ Context:
 - Chain: Base
 - DAO: Gnars (Builder frontend)
 - Scope: governance voting only
-- Delegation does NOT count until explicit delegation
+- Votes auto-delegate to the owner; explicit delegation overrides per token
 - Tests: Hardhat + TypeScript
 
 ## Task List
@@ -22,8 +22,8 @@ Context:
   - [ ] clearTokenDelegation(uint256[] tokenIds)
 - [ ] Update mint/transfer/burn hooks:
   - [ ] Remove votes from previous delegate for each token.
-  - [ ] Clear delegation on transfer (reset).
-  - [ ] Do not auto-delegate on mint.
+  - [ ] Clear explicit delegation on transfer (reset to owner).
+  - [ ] Auto-delegate to owner on mint/transfer.
 - [ ] Preserve IVotes compatibility (getVotes/getPastVotes) for Governor integration.
 - [ ] Add events for per-token delegation and revocation.
 - [ ] Set up Hardhat + TS project:
@@ -38,7 +38,7 @@ Context:
 - [ ] Write integration docs for Gnars frontend:
   - [ ] UI flow to select tokenIds for delegation
   - [ ] Example calls for delegateTokenIds/clearTokenDelegation
-  - [ ] Reminder: votes count only after delegation
+  - [ ] Reminder: votes auto-delegate to owner by default
 - [ ] Upgrade plan:
   - [ ] Deploy new implementation
   - [ ] Submit upgrade proposal via Governor/Executor

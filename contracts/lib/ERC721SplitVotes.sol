@@ -26,16 +26,17 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     ///      maintain storage layout compatibility when upgrading from ERC721Votes.
     mapping(address => address) internal delegation;
 
-    /// @notice The number of checkpoints for an account
-    /// @dev Account => Num Checkpoints
+    /// @notice The packed checkpoint metadata for an account
+    /// @dev Account => (upper 128 bits: start index, lower 128 bits: count)
     mapping(address => uint256) internal numCheckpoints;
 
     /// @notice The checkpoint for an account
     /// @dev Account => Checkpoint Id => Checkpoint
     mapping(address => mapping(uint256 => Checkpoint)) internal checkpoints;
 
-    /// @notice Maximum number of checkpoints per account to prevent bloat attacks
+    /// @notice Maximum number of checkpoints retained per account to prevent bloat attacks
     uint256 internal constant MAX_CHECKPOINTS = 1000;
+    uint256 internal constant CHECKPOINT_INDEX_SHIFT = 128;
 
     ///                                                          ///
     ///                           ERRORS                         ///
@@ -47,8 +48,11 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     /// @dev Reverts when vote accounting would underflow
     error VOTE_UNDERFLOW();
 
-    /// @dev Reverts when maximum number of checkpoints is exceeded
+    /// @dev Legacy error retained for compatibility; checkpoints are pruned instead of reverting
     error TOO_MANY_CHECKPOINTS();
+
+    /// @dev Reverts when historical checkpoints have been pruned
+    error CHECKPOINTS_PRUNED();
 
     ///                                                          ///
     ///                        VOTING WEIGHT                     ///
@@ -58,9 +62,13 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     /// @param _account The account address
     /// @return The current voting weight
     function getVotes(address _account) public view returns (uint256) {
-        uint256 nCheckpoints = numCheckpoints[_account];
+        uint256 packed = numCheckpoints[_account];
+        uint256 nCheckpoints = uint256(uint128(packed));
+        uint256 start = packed >> CHECKPOINT_INDEX_SHIFT;
         unchecked {
-            return nCheckpoints != 0 ? checkpoints[_account][nCheckpoints - 1].votes : 0;
+            if (nCheckpoints == 0) return 0;
+            uint256 lastIndex = _checkpointIndex(start, nCheckpoints - 1);
+            return checkpoints[_account][lastIndex].votes;
         }
     }
 
@@ -71,16 +79,23 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     function getPastVotes(address _account, uint256 _timestamp) public view returns (uint256) {
         if (_timestamp >= block.timestamp) revert INVALID_TIMESTAMP();
 
-        uint256 nCheckpoints = numCheckpoints[_account];
+        uint256 packed = numCheckpoints[_account];
+        uint256 nCheckpoints = uint256(uint128(packed));
+        uint256 start = packed >> CHECKPOINT_INDEX_SHIFT;
         if (nCheckpoints == 0) return 0;
 
         mapping(uint256 => Checkpoint) storage accountCheckpoints = checkpoints[_account];
 
         unchecked {
             uint256 lastCheckpoint = nCheckpoints - 1;
+            uint256 oldestIndex = _checkpointIndex(start, 0);
+            uint256 newestIndex = _checkpointIndex(start, lastCheckpoint);
 
-            if (accountCheckpoints[lastCheckpoint].timestamp <= _timestamp) return accountCheckpoints[lastCheckpoint].votes;
-            if (accountCheckpoints[0].timestamp > _timestamp) return 0;
+            if (accountCheckpoints[newestIndex].timestamp <= _timestamp) return accountCheckpoints[newestIndex].votes;
+            if (accountCheckpoints[oldestIndex].timestamp > _timestamp) {
+                if (nCheckpoints == MAX_CHECKPOINTS && start != 0) revert CHECKPOINTS_PRUNED();
+                return 0;
+            }
 
             uint256 high = lastCheckpoint;
             uint256 low;
@@ -89,7 +104,7 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
 
             while (high > low) {
                 middle = high - (high - low) / 2;
-                cp = accountCheckpoints[middle];
+                cp = accountCheckpoints[_checkpointIndex(start, middle)];
 
                 if (cp.timestamp == _timestamp) {
                     return cp.votes;
@@ -100,7 +115,7 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
                 }
             }
 
-            return accountCheckpoints[low].votes;
+            return accountCheckpoints[_checkpointIndex(start, low)].votes;
         }
     }
 
@@ -153,79 +168,116 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         if (_from == _to || _amount == 0) return;
 
         if (_from != address(0)) {
-            uint256 newCheckpointId = numCheckpoints[_from];
-            uint256 prevCheckpointId;
-            uint256 prevTotalVotes;
-            uint256 prevTimestamp;
-
-            if (newCheckpointId != 0) {
-                unchecked {
-                    prevCheckpointId = newCheckpointId - 1;
-                }
-                prevTotalVotes = checkpoints[_from][prevCheckpointId].votes;
-                prevTimestamp = checkpoints[_from][prevCheckpointId].timestamp;
-            }
+            (uint256 prevTotalVotes, uint256 prevTimestamp, uint256 checkpointCount, uint256 checkpointStart) = _latestCheckpoint(
+                _from
+            );
 
             // Explicit underflow check - critical for security
             if (prevTotalVotes < _amount) revert VOTE_UNDERFLOW();
 
             unchecked {
-                _writeCheckpoint(_from, newCheckpointId, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes - _amount);
+                _writeCheckpoint(
+                    _from,
+                    checkpointCount,
+                    checkpointStart,
+                    prevTimestamp,
+                    prevTotalVotes,
+                    prevTotalVotes - _amount
+                );
             }
         }
 
         if (_to != address(0)) {
-            uint256 nCheckpoints = numCheckpoints[_to];
-            uint256 prevCheckpointId;
-            uint256 prevTotalVotes;
-            uint256 prevTimestamp;
-
-            if (nCheckpoints != 0) {
-                unchecked {
-                    prevCheckpointId = nCheckpoints - 1;
-                }
-                prevTotalVotes = checkpoints[_to][prevCheckpointId].votes;
-                prevTimestamp = checkpoints[_to][prevCheckpointId].timestamp;
-            }
+            (uint256 prevTotalVotes, uint256 prevTimestamp, uint256 checkpointCount, uint256 checkpointStart) = _latestCheckpoint(
+                _to
+            );
 
             // Check for overflow before adding
             if (prevTotalVotes + _amount > type(uint192).max) revert VOTE_UNDERFLOW();
 
             unchecked {
-                _writeCheckpoint(_to, nCheckpoints, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes + _amount);
+                _writeCheckpoint(
+                    _to,
+                    checkpointCount,
+                    checkpointStart,
+                    prevTimestamp,
+                    prevTotalVotes,
+                    prevTotalVotes + _amount
+                );
             }
         }
     }
 
+    /// @dev Returns the latest checkpoint data and packed metadata
+    function _latestCheckpoint(address _account)
+        private
+        view
+        returns (
+            uint256 prevTotalVotes,
+            uint256 prevTimestamp,
+            uint256 checkpointCount,
+            uint256 checkpointStart
+        )
+    {
+        uint256 packed = numCheckpoints[_account];
+        checkpointCount = uint256(uint128(packed));
+        checkpointStart = packed >> CHECKPOINT_INDEX_SHIFT;
+
+        if (checkpointCount == 0) return (0, 0, 0, checkpointStart);
+
+        uint256 lastIndex = _checkpointIndex(checkpointStart, checkpointCount - 1);
+        Checkpoint storage checkpoint = checkpoints[_account][lastIndex];
+        return (checkpoint.votes, checkpoint.timestamp, checkpointCount, checkpointStart);
+    }
+
     /// @dev Records a checkpoint
     /// @param _account The account address
-    /// @param _newId The new checkpoint id
-    /// @param _prevId The previous checkpoint id
     /// @param _prevTimestamp The previous checkpoint timestamp
     /// @param _prevTotalVotes The previous checkpoint voting weight
     /// @param _newTotalVotes The new checkpoint voting weight
     function _writeCheckpoint(
         address _account,
-        uint256 _newId,
-        uint256 _prevId,
+        uint256 _count,
+        uint256 _start,
         uint256 _prevTimestamp,
         uint256 _prevTotalVotes,
         uint256 _newTotalVotes
     ) private {
         unchecked {
-            if (_newId > 0 && _prevTimestamp == block.timestamp) {
-                checkpoints[_account][_prevId].votes = uint192(_newTotalVotes);
+            if (_count > 0 && _prevTimestamp == block.timestamp) {
+                uint256 lastIndex = _checkpointIndex(_start, _count - 1);
+                checkpoints[_account][lastIndex].votes = uint192(_newTotalVotes);
             } else {
-                if (numCheckpoints[_account] >= MAX_CHECKPOINTS) revert TOO_MANY_CHECKPOINTS();
+                uint256 writeIndex;
+                if (_count < MAX_CHECKPOINTS) {
+                    writeIndex = _checkpointIndex(_start, _count);
+                    ++_count;
+                } else {
+                    writeIndex = _start;
+                    _start = _start + 1;
+                    if (_start == MAX_CHECKPOINTS) {
+                        _start = 0;
+                    }
+                }
 
-                Checkpoint storage checkpoint = checkpoints[_account][_newId];
+                Checkpoint storage checkpoint = checkpoints[_account][writeIndex];
                 checkpoint.votes = uint192(_newTotalVotes);
                 checkpoint.timestamp = uint64(block.timestamp);
-                ++numCheckpoints[_account];
             }
+
+            numCheckpoints[_account] = (_start << CHECKPOINT_INDEX_SHIFT) | _count;
 
             emit DelegateVotesChanged(_account, _prevTotalVotes, _newTotalVotes);
         }
+    }
+
+    /// @dev Returns the physical checkpoint index for a logical offset in the ring buffer
+    function _checkpointIndex(uint256 _start, uint256 _offset) private pure returns (uint256) {
+        uint256 index = _start + _offset;
+        if (index >= MAX_CHECKPOINTS) {
+            index -= MAX_CHECKPOINTS;
+        }
+        return index;
     }
 
     /// @dev Hook called after token transfer - override in inheriting contract to handle delegation

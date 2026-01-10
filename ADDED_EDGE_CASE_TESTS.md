@@ -15,8 +15,8 @@ TypeScript/Hardhat-based tests covering 800+ lines of edge case scenarios.
   - Tests reentrancy during batch delegation
   - Tests reentrancy during batch clear delegation
 
-- **Checkpoint Bloat Attack Prevention**
-  - Tests prevention of checkpoint bloat (MAX_CHECKPOINTS = 1000)
+- **Checkpoint Retention & Pruning**
+  - Tests rolling checkpoint window (MAX_CHECKPOINTS = 1000)
   - Tests multiple accounts with many checkpoints
   - Tests checkpoint compression in same block
 
@@ -65,7 +65,7 @@ Foundry-based Solidity tests for direct Solidity-level testing with 200+ lines.
 
 **Test Categories:**
 - Reentrancy prevention during token transfer
-- Checkpoint bloat prevention (1000 checkpoint limit)
+- Checkpoint retention window (1000 checkpoint limit)
 - Vote accounting integrity
 - Race condition prevention
 - Batch operation boundaries (MAX_BATCH_SIZE = 100)
@@ -83,9 +83,9 @@ Tests ensure the `ReentrancyGuard` prevents:
 - Reentrancy during burn operations
 - Reentrancy during batch delegation operations
 
-### 2. Checkpoint Bloat Attacks
-Tests verify the `MAX_CHECKPOINTS` constant (1000) prevents storage bloat by:
-- Creating more than 1000 checkpoints per account
+### 2. Checkpoint Retention & Pruning
+Tests verify the `MAX_CHECKPOINTS` constant (1000) enforces a rolling window by:
+- Rotating checkpoints beyond the retention window
 - Handling multiple accounts with many checkpoints
 - Compressing checkpoints when operations occur in same block
 
@@ -117,7 +117,7 @@ Tests ensure atomic operations prevent:
 - ✅ Token ID wrapping at 100 (modulo arithmetic)
 
 ### Access Control
-- ✅ Only token owner can delegate (not approved operators)
+- ✅ Owner or approved operator can delegate/clear
 - ✅ Only auction or minter can mint
 - ✅ Only owner can update minters
 - ✅ Only manager can set metadata renderer
@@ -202,10 +202,10 @@ forge test -vvv
 
 ### Mitigated Vulnerabilities
 - ✅ Reentrancy (via ReentrancyGuard)
-- ✅ Checkpoint Bloat (via MAX_CHECKPOINTS)
+- ✅ Checkpoint Lockout (rolling window via MAX_CHECKPOINTS)
 - ✅ Batch DoS (via MAX_BATCH_SIZE)
 - ✅ Vote Underflow (via explicit checks)
-- ✅ Unauthorized Delegation (via ONLY_TOKEN_OWNER modifier)
+- ✅ Unauthorized Delegation (owner or approved operator required)
 - ✅ Zero Address Delegation (via INVALID_DELEGATE error)
 
 ### Still Recommended

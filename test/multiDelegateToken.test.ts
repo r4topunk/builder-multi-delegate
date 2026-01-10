@@ -165,7 +165,7 @@ describe("MultiDelegateToken", () => {
       );
     });
 
-    it("requires the token owner to delegate or clear", async () => {
+    it("requires the token owner or approved operator to delegate or clear", async () => {
       const { token, auction, owner, alice, bob } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
@@ -176,12 +176,12 @@ describe("MultiDelegateToken", () => {
       );
 
       await token.connect(owner).setApprovalForAll(alice.address, true);
-      await expect(token.connect(alice).delegateTokenIds(bob.address, [0])).to.be.revertedWithCustomError(
-        token,
-        "ONLY_TOKEN_OWNER"
-      );
+      await expect(token.connect(alice).delegateTokenIds(bob.address, [0])).to.not.be.reverted;
+      expect(await token.getVotes(bob.address)).to.equal(1);
 
-      await expect(token.connect(alice).clearTokenDelegation([0])).to.be.revertedWithCustomError(token, "ONLY_TOKEN_OWNER");
+      await expect(token.connect(alice).clearTokenDelegation([0])).to.not.be.reverted;
+      expect(await token.getVotes(bob.address)).to.equal(0);
+      expect(await token.getVotes(owner.address)).to.equal(1);
     });
 
     it("clears delegation on transfer and auto-delegates to the new owner", async () => {
@@ -474,7 +474,7 @@ describe("MultiDelegateToken", () => {
   });
 
   describe("Security: Access Control", () => {
-    it("only token owner can delegate (not approved operators)", async () => {
+    it("allows approved operators to delegate", async () => {
       const { token, auction, owner, alice, bob } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
@@ -482,10 +482,12 @@ describe("MultiDelegateToken", () => {
 
       await expect(
         token.connect(alice).delegateTokenIds(bob.address, [0])
-      ).to.be.revertedWithCustomError(token, "ONLY_TOKEN_OWNER");
+      ).to.not.be.reverted;
+
+      expect(await token.getVotes(bob.address)).to.equal(1);
     });
 
-    it("only token owner can clear delegation (not approved operators)", async () => {
+    it("allows approved operators to clear delegation", async () => {
       const { token, auction, owner, alice, bob } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
@@ -494,10 +496,13 @@ describe("MultiDelegateToken", () => {
 
       await expect(
         token.connect(alice).clearTokenDelegation([0])
-      ).to.be.revertedWithCustomError(token, "ONLY_TOKEN_OWNER");
+      ).to.not.be.reverted;
+
+      expect(await token.getVotes(bob.address)).to.equal(0);
+      expect(await token.getVotes(owner.address)).to.equal(1);
     });
 
-    it("setApprovalForAll does not grant delegation rights", async () => {
+    it("setApprovalForAll grants delegation rights", async () => {
       const { token, auction, owner, alice, bob } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
@@ -505,7 +510,9 @@ describe("MultiDelegateToken", () => {
 
       await expect(
         token.connect(alice).delegateTokenIds(bob.address, [0])
-      ).to.be.revertedWithCustomError(token, "ONLY_TOKEN_OWNER");
+      ).to.not.be.reverted;
+
+      expect(await token.getVotes(bob.address)).to.equal(1);
     });
   });
 

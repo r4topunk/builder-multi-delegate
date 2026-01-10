@@ -39,6 +39,9 @@ contract MultiDelegateToken is
     /// @notice The contract upgrade manager
     IManager private immutable manager;
 
+    /// @notice Gas limit for metadata renderer callbacks
+    uint256 private constant METADATA_GAS_LIMIT = 500_000;
+
     ///                                                          ///
     ///                          MODIFIERS                       ///
     ///                                                          ///
@@ -76,6 +79,13 @@ contract MultiDelegateToken is
     /// @param previousDelegate The delegate that was removed
     event TokenDelegationCleared(uint256 indexed tokenId, address indexed previousDelegate);
 
+    /// @notice Emitted when the metadata renderer fails during mint
+    /// @param tokenId The token id being minted
+    /// @param renderer The metadata renderer address
+    /// @param reason The revert data (empty if renderer returned false)
+    /// @param returnedFalse Whether the renderer returned false instead of reverting
+    event MetadataRendererFailed(uint256 indexed tokenId, address indexed renderer, bytes reason, bool returnedFalse);
+
     /// @dev Reverts when delegatee is address(0)
     error INVALID_DELEGATE();
 
@@ -84,6 +94,9 @@ contract MultiDelegateToken is
 
     /// @dev Reverts when mint count would overflow
     error CANNOT_MINT();
+
+    /// @dev Reverts when a minter update includes the zero address
+    error INVALID_MINTER();
 
     ///                                                          ///
     ///                         CONSTRUCTOR                      ///
@@ -234,7 +247,15 @@ contract MultiDelegateToken is
             ++settings.totalSupply;
         }
 
-        if (!settings.metadataRenderer.onMinted(_tokenId)) revert NO_METADATA_GENERATED();
+        try settings.metadataRenderer.onMinted{ gas: METADATA_GAS_LIMIT }(_tokenId) returns (bool success) {
+            if (!success) {
+                emit MetadataRendererFailed(_tokenId, address(settings.metadataRenderer), "", true);
+            }
+        } catch (bytes memory reason) {
+            emit MetadataRendererFailed(_tokenId, address(settings.metadataRenderer), reason, false);
+        } catch {
+            emit MetadataRendererFailed(_tokenId, address(settings.metadataRenderer), "", false);
+        }
     }
 
     function _isForFounder(uint256 _tokenId) private returns (bool) {
@@ -317,7 +338,7 @@ contract MultiDelegateToken is
     }
 
     function updateFounders(IManager.FounderParams[] calldata newFounders) external onlyOwner {
-        if (settings.totalSupply > 0) revert CANNOT_CHANGE_RESERVE();
+        if (settings.totalSupply > 0 || settings.mintCount > 0) revert CANNOT_CHANGE_RESERVE();
 
         uint256 numFounders = settings.numFounders;
         Founder[] memory cachedFounders = new Founder[](numFounders);
@@ -391,6 +412,7 @@ contract MultiDelegateToken is
 
     function updateMinters(MinterParams[] calldata _minters) external onlyOwner {
         for (uint256 i; i < _minters.length; ++i) {
+            if (_minters[i].minter == address(0)) revert INVALID_MINTER();
             if (minter[_minters[i].minter] == _minters[i].allowed) continue;
 
             emit MinterUpdated(_minters[i].minter, _minters[i].allowed);
@@ -454,7 +476,7 @@ contract MultiDelegateToken is
             uint256 tokenId = tokenIds[i];
 
             address tokenOwner = ownerOf(tokenId);
-            if (tokenOwner != msg.sender) {
+            if (!_isOwnerOrApproved(tokenOwner, msg.sender, tokenId)) {
                 revert ONLY_TOKEN_OWNER();
             }
 
@@ -488,7 +510,7 @@ contract MultiDelegateToken is
             uint256 tokenId = tokenIds[i];
 
             address tokenOwner = ownerOf(tokenId);
-            if (tokenOwner != msg.sender) {
+            if (!_isOwnerOrApproved(tokenOwner, msg.sender, tokenId)) {
                 revert ONLY_TOKEN_OWNER();
             }
 
@@ -503,6 +525,15 @@ contract MultiDelegateToken is
                 ++i;
             }
         }
+    }
+
+    /// @dev Returns true if spender is owner or approved for the token
+    function _isOwnerOrApproved(
+        address tokenOwner,
+        address spender,
+        uint256 tokenId
+    ) internal view returns (bool) {
+        return spender == tokenOwner || operatorApprovals[tokenOwner][spender] || tokenApprovals[tokenId] == spender;
     }
 
     /// @dev Handles vote accounting on transfer, including clearing per-token delegation

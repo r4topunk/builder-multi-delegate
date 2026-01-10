@@ -16,14 +16,13 @@
 ---
 
 ### 2. Checkpoint Bloat Protection ✅
-**Issue:** An attacker could create unlimited checkpoints by rapidly delegating/clearing votes, causing DoS through storage bloat and gas cost increases.
+**Issue:** A hard checkpoint cap (`MAX_CHECKPOINTS = 1000`) prevented storage bloat but introduced a liveness risk: delegates could be permanently locked once they hit the cap.
 
 **Fixes Applied:**
-- Added `MAX_CHECKPOINTS = 1000` constant (ERC721SplitVotes.sol:39)
-- Added checkpoint limit check in `_writeCheckpoint()` (ERC721SplitVotes.sol:219)
-- Added new error `TOO_MANY_CHECKPOINTS()` (ERC721SplitVotes.sol:48)
+- Implemented a rolling checkpoint window that **prunes the oldest checkpoints** instead of reverting.
+- Added `CHECKPOINTS_PRUNED()` error when `getPastVotes()` is queried before the retained window.
 
-**Rationale:** Limits each address to maximum 1000 checkpoints to prevent storage bloat attacks while still allowing legitimate long-term voting history.
+**Rationale:** Retains bounded history while keeping delegation live. Old history is explicitly pruned rather than causing permanent lockout.
 
 ---
 
@@ -52,12 +51,53 @@
 ---
 
 ### 5. Founders Update Validation ✅
-**Issue:** `updateFounders()` could be called after tokens are minted, potentially creating conflicts between old vesting schedules and new allocations.
+**Issue:** `updateFounders()` could be called after auction mints if totalSupply returned to zero (e.g., after burns), risking inconsistent founder schedules.
 
 **Fixes Applied:**
-- Added check for `settings.totalSupply > 0` in `updateFounders()` (MultiDelegateToken.sol:315)
+- Added check for `settings.mintCount > 0` **in addition to** `settings.totalSupply > 0`.
 
-**Rationale:** Prevents founder allocation changes after tokens are in circulation, avoiding conflicts between historical vesting and new allocations.
+**Rationale:** Prevents founder allocation changes after any auction mint, even if supply is later burned.
+
+---
+
+### 6. Metadata Renderer Circuit Breaker ✅
+**Issue:** `metadataRenderer.onMinted()` could revert or consume excessive gas, blocking all minting.
+
+**Fixes Applied:**
+- Wrapped `onMinted()` in a `try/catch` with a bounded gas stipend.
+- Emits `MetadataRendererFailed` on revert or false return instead of reverting the mint.
+
+**Rationale:** Protects mint liveness even if the renderer is malicious or broken, while preserving an on-chain signal for monitoring.
+
+---
+
+### 7. Approved Operator Delegation ✅
+**Issue:** Approved ERC-721 operators could not delegate/clear, limiting composability.
+
+**Fixes Applied:**
+- Allowed `approve()` and `setApprovalForAll()` operators to call `delegateTokenIds()` and `clearTokenDelegation()`.
+
+**Rationale:** Aligns delegation permissions with ERC-721 approval semantics, enabling delegation management contracts.
+
+---
+
+### 8. Minter Input Validation ✅
+**Issue:** `updateMinters()` allowed the zero address to be set as a minter.
+
+**Fixes Applied:**
+- Added zero-address validation with `INVALID_MINTER()`.
+
+**Rationale:** Prevents misconfiguration and accidental privilege assignment to address(0).
+
+---
+
+### 9. Storage Gap Reserved ✅
+**Issue:** TokenStorageV4 had no storage gap, risking future upgrade collisions.
+
+**Fixes Applied:**
+- Added `uint256[50] private __gap;` to TokenStorageV4.
+
+**Rationale:** Preserves upgrade safety for future storage additions.
 
 ---
 
@@ -77,29 +117,28 @@
 ## Contracts Modified
 
 ### MultiDelegateToken.sol
-- Added `nonReentrant` to `delegateTokenIds()` (line 449)
-- Added `nonReentrant` to `clearTokenDelegation()` (line 484)
-- Added `CANNOT_MINT` error (line 86)
-- Added overflow check in `_mintWithVesting()` (line 219)
-- Added validation in `updateFounders()` (line 315)
+- Added metadata renderer failure handling with bounded gas and failure events
+- Allowed approved ERC-721 operators to delegate/clear
+- Added `INVALID_MINTER` zero-address validation in `updateMinters()`
+- Tightened `updateFounders()` validation to include `mintCount`
 
 ### ERC721SplitVotes.sol
-- Added `MAX_CHECKPOINTS` constant (line 39)
-- Added `TOO_MANY_CHECKPOINTS` error (line 48)
-- Added checkpoint limit in `_writeCheckpoint()` (line 219)
-- Added overflow check in `_moveDelegateVotes()` (line 176)
+- Implemented rolling checkpoint window with pruning
+- Packed checkpoint metadata to track ring buffer start and count
+- Added `CHECKPOINTS_PRUNED` error for out-of-window history queries
+
+### TokenStorageV4.sol
+- Added storage gap for upgrade safety
 
 ---
 
 ## Test Results
 
-### All Original Tests: ✅ PASSING
-- 60 tests passing
-- 0 tests failing
-- Coverage maintained for all existing functionality
+### Status
+- Not rerun as part of this update
 
 ### Test Changes
-All existing tests continue to pass, confirming backward compatibility:
+Key behavior changes covered by tests:
 - Basic delegation tests
 - Access control tests
 - Checkpoint integrity tests
@@ -114,27 +153,33 @@ All existing tests continue to pass, confirming backward compatibility:
 | Vulnerability Type | Severity | Status | Lines Changed |
 |------------------|----------|--------|---------------|
 | Reentrancy | 🔴 Critical | ✅ Fixed | MultiDelegateToken.sol:449, 484 |
-| Checkpoint Bloat | 🟠 High | ✅ Fixed | ERC721SplitVotes.sol:39, 48, 219 |
+| Checkpoint Lockout | 🟠 High | ✅ Fixed | ERC721SplitVotes.sol |
 | Same-Block Race | 🟠 High | ✅ Fixed | ERC721SplitVotes.sol:208-218 |
 | Mint Count Overflow | 🟡 Medium | ✅ Fixed | MultiDelegateToken.sol:86, 219 |
 | Vote Overflow | 🟡 Medium | ✅ Fixed | ERC721SplitVotes.sol:176 |
-| Founders Update | 🟡 Medium | ✅ Fixed | MultiDelegateToken.sol:315 |
+| Founders Update | 🟡 Medium | ✅ Fixed | MultiDelegateToken.sol |
+| Metadata Renderer DoS | 🟡 Medium | ✅ Fixed | MultiDelegateToken.sol |
+| Minter Validation | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
+| Operator Delegation | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
 
 ---
 
 ## Remaining Considerations
 
 ### Low Priority Issues (Not Addressed)
-1. **MAX_BATCH_SIZE**: Limit of 100 may be restrictive for legitimate use cases
+1. **Checkpoint History Window**: `getPastVotes()` reverts with `CHECKPOINTS_PRUNED` for timestamps older than the retained window
+   - **Recommendation**: Ensure governance snapshots fall within the rolling window
+
+2. **MAX_BATCH_SIZE**: Limit of 100 may be restrictive for legitimate use cases
    - **Recommendation**: Make configurable via constructor parameter
 
-2. **Dead Code**: Legacy `delegate()` and `delegateBySig()` functions remain disabled
+3. **Dead Code**: Legacy `delegate()` and `delegateBySig()` functions remain disabled
    - **Recommendation**: Remove in future major version to reduce attack surface
 
-3. **Timestamp Manipulation**: `getPastVotes()` uses `block.timestamp` which can be manipulated
+4. **Timestamp Manipulation**: `getPastVotes()` uses `block.timestamp` which can be manipulated
    - **Recommendation**: Consider `block.number` for governance-critical queries
 
-4. **Missing NatSpec**: Some functions lack comprehensive documentation
+5. **Missing NatSpec**: Some functions lack comprehensive documentation
    - **Recommendation**: Add detailed NatSpec for all public/external functions
 
 ---
@@ -142,10 +187,9 @@ All existing tests continue to pass, confirming backward compatibility:
 ## Gas Impact
 
 ### Estimated Gas Cost Changes
-- `delegateTokenIds()`: +500 gas (reentrancy guard)
-- `clearTokenDelegation()`: +500 gas (reentrancy guard)
-- `_moveDelegateVotes()`: +100 gas (overflow check)
-- `_writeCheckpoint()`: +50 gas (checkpoint limit check)
+- `delegateTokenIds()` / `clearTokenDelegation()`: small overhead for approval checks
+- `_moveDelegateVotes()` / `_writeCheckpoint()`: modest overhead for ring-buffer bookkeeping
+- `_mint()`: bounded metadata callback gas, plus failure event emission on renderer issues
 
 **Note**: These costs are justified by significant security improvements.
 
@@ -153,8 +197,7 @@ All existing tests continue to pass, confirming backward compatibility:
 
 ## Recommendations for Future Improvements
 
-1. **Implement Checkpoint Pruning**: Add function to remove old checkpoints beyond a certain age
-2. **Add Comprehensive Events**: Emit events for all critical state changes
-3. **Upgrade Block Number**: Consider using `block.number` instead of `block.timestamp`
-4. **Implement Circuit Breakers**: Add emergency pause functionality for delegation
-5. **Add Time-Lock for Founders**: Require time-lock for critical founder changes
+1. **Expose Checkpoint Window**: Consider making the retention window configurable
+2. **Upgrade Block Number**: Consider using `block.number` instead of `block.timestamp`
+3. **Implement Delegation Pause**: Add emergency pause functionality for delegation operations
+4. **Add Time-Lock for Founders**: Require time-lock for critical founder changes
