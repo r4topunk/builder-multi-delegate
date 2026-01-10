@@ -416,7 +416,8 @@ contract MultiDelegateToken is
 
     /// @notice Returns the delegate for a tokenId
     function tokenDelegate(uint256 tokenId) external view returns (address) {
-        return tokenDelegates[tokenId];
+        address delegatee = tokenDelegates[tokenId];
+        return delegatee == address(0) ? ownerOf(tokenId) : delegatee;
     }
 
     /// @notice Delegates specific tokenIds to a delegatee
@@ -426,12 +427,21 @@ contract MultiDelegateToken is
         for (uint256 i = 0; i < tokenIds.length; ) {
             uint256 tokenId = tokenIds[i];
 
-            if (ownerOf(tokenId) != msg.sender) {
+            address tokenOwner = ownerOf(tokenId);
+            if (tokenOwner != msg.sender) {
                 revert ONLY_TOKEN_OWNER();
             }
 
-            address prevDelegate = tokenDelegates[tokenId];
-            if (prevDelegate != delegatee) {
+            address currentDelegate = tokenDelegates[tokenId];
+            address prevDelegate = currentDelegate == address(0) ? tokenOwner : currentDelegate;
+
+            if (delegatee == tokenOwner) {
+                if (currentDelegate != address(0)) {
+                    delete tokenDelegates[tokenId];
+                    emit TokenDelegationCleared(tokenId, currentDelegate);
+                    _moveDelegateVotes(prevDelegate, tokenOwner, 1);
+                }
+            } else if (prevDelegate != delegatee) {
                 tokenDelegates[tokenId] = delegatee;
                 emit TokenDelegateChanged(tokenId, prevDelegate, delegatee);
                 _moveDelegateVotes(prevDelegate, delegatee, 1);
@@ -448,7 +458,8 @@ contract MultiDelegateToken is
         for (uint256 i = 0; i < tokenIds.length; ) {
             uint256 tokenId = tokenIds[i];
 
-            if (ownerOf(tokenId) != msg.sender) {
+            address tokenOwner = ownerOf(tokenId);
+            if (tokenOwner != msg.sender) {
                 revert ONLY_TOKEN_OWNER();
             }
 
@@ -456,7 +467,7 @@ contract MultiDelegateToken is
             if (prevDelegate != address(0)) {
                 delete tokenDelegates[tokenId];
                 emit TokenDelegationCleared(tokenId, prevDelegate);
-                _moveDelegateVotes(prevDelegate, address(0), 1);
+                _moveDelegateVotes(prevDelegate, tokenOwner, 1);
             }
 
             unchecked {
@@ -465,7 +476,7 @@ contract MultiDelegateToken is
         }
     }
 
-    /// @dev Clears delegation on transfer and prevents auto-delegation
+    /// @dev Clears per-token overrides on transfer and defaults to the new owner
     function _afterTokenTransfer(
         address _from,
         address _to,
@@ -476,12 +487,16 @@ contract MultiDelegateToken is
             return;
         }
 
-        address prevDelegate = tokenDelegates[_tokenId];
-        if (prevDelegate != address(0)) {
+        address currentDelegate = tokenDelegates[_tokenId];
+        address prevDelegate = currentDelegate == address(0) ? _from : currentDelegate;
+        address newDelegate = _to;
+
+        if (currentDelegate != address(0)) {
             delete tokenDelegates[_tokenId];
-            emit TokenDelegationCleared(_tokenId, prevDelegate);
-            _moveDelegateVotes(prevDelegate, address(0), 1);
+            emit TokenDelegationCleared(_tokenId, currentDelegate);
         }
+
+        _moveDelegateVotes(prevDelegate, newDelegate, 1);
 
         super._afterTokenTransfer(_from, _to, _tokenId);
     }
