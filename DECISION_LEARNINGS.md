@@ -1,6 +1,6 @@
 # Decision Learnings Log (Commit-Linked)
 
-Template note (append-only): This document is additions only. Never edit or remove past entries. Add new entries by appending at the end, using the template below.
+Template note (append-only): This document is additions only. Never edit or remove past entries. Add new entries by appending at the end, using the template below. Always run `date` to capture the current local timestamp before writing a new entry.
 
 Template for new entries (append at end):
 - Date/time (local): YYYY-MM-DD HH:MM:SS TZ
