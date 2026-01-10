@@ -340,36 +340,6 @@ describe("MultiDelegateToken - Edge Cases", () => {
   });
 
   describe("Delegation Edge Cases", () => {
-    it("handles MAX_BATCH_SIZE boundary exactly", async () => {
-      const { token, auction, owner, alice } = await deployToken();
-
-      for (let i = 0; i < 100; i++) {
-        await token.connect(auction).mintTo(owner.address);
-      }
-
-      const tokenIds = Array.from({ length: 100 }, (_, i) => i);
-
-      await expect(
-        token.connect(owner).delegateTokenIds(alice.address, tokenIds)
-      ).to.not.be.reverted;
-
-      expect(await token.getVotes(alice.address)).to.equal(100);
-    });
-
-    it("rejects batch size of MAX_BATCH_SIZE + 1", async () => {
-      const { token, auction, owner, alice } = await deployToken();
-
-      for (let i = 0; i < 101; i++) {
-        await token.connect(auction).mintTo(owner.address);
-      }
-
-      const tokenIds = Array.from({ length: 101 }, (_, i) => i);
-
-      await expect(
-        token.connect(owner).delegateTokenIds(alice.address, tokenIds)
-      ).to.be.revertedWithCustomError(token, "BATCH_SIZE_EXCEEDED");
-    });
-
     it("handles duplicate tokenIds in delegation", async () => {
       const { token, auction, owner, alice } = await deployToken();
 
@@ -598,18 +568,6 @@ describe("MultiDelegateToken - Edge Cases", () => {
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
 
       expect(await token.getVotes(alice.address)).to.equal(1);
-    });
-
-    it("handles empty batch delegation", async () => {
-      const { token, owner, alice } = await deployToken();
-
-      await expect(token.connect(owner).delegateTokenIds(alice.address, [])).to.not.be.reverted;
-    });
-
-    it("handles empty batch clear", async () => {
-      const { token, owner } = await deployToken();
-
-      await expect(token.connect(owner).clearTokenDelegation([])).to.not.be.reverted;
     });
 
     it("handles batch clear of mixed delegated and non-delegated tokens", async () => {

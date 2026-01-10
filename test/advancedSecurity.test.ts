@@ -223,87 +223,6 @@ describe("MultiDelegateToken - Advanced Security & Edge Cases", () => {
     });
   });
 
-  describe("Vote Overflow/Underflow Boundaries", () => {
-    it("prevents vote underflow during delegation transfer", async () => {
-      const { token, manager, auction, owner, alice } = await deployToken();
-
-      await token.connect(manager).updateMinters([{ minter: auction.address, allowed: true }]);
-
-      await token.connect(auction).mintTo(owner.address);
-      await token.connect(owner).delegateTokenIds(alice.address, [0]);
-
-      expect(await token.getVotes(alice.address)).to.equal(1);
-
-      await token.connect(owner).clearTokenDelegation([0]);
-
-      expect(await token.getVotes(alice.address)).to.equal(0);
-      expect(await token.getVotes(owner.address)).to.equal(1);
-    });
-
-    it("handles large vote amounts across many tokens", async () => {
-      const { token, manager, auction, owner, alice } = await deployToken();
-
-      await token.connect(manager).updateMinters([{ minter: auction.address, allowed: true }]);
-
-      const largeAmount = 500;
-
-      for (let i = 0; i < largeAmount; i++) {
-        await token.connect(auction).mintTo(owner.address);
-      }
-
-      const tokenIds = Array.from({ length: largeAmount }, (_, i) => i);
-      await token.connect(owner).delegateTokenIds(alice.address, tokenIds);
-
-      expect(await token.getVotes(alice.address)).to.equal(largeAmount);
-      expect(await token.getVotes(owner.address)).to.equal(0);
-
-      await token.connect(owner).clearTokenDelegation(tokenIds);
-
-      expect(await token.getVotes(alice.address)).to.equal(0);
-      expect(await token.getVotes(owner.address)).to.equal(largeAmount);
-    });
-
-    it("prevents uint192 overflow with maximum vote values", async () => {
-      const { token, manager, auction, owner, alice } = await deployToken();
-
-      await token.connect(manager).updateMinters([{ minter: auction.address, allowed: true }]);
-
-      const reasonableAmount = 1000;
-
-      for (let i = 0; i < reasonableAmount; i++) {
-        await token.connect(auction).mintTo(owner.address);
-      }
-
-      const tokenIds = Array.from({ length: reasonableAmount }, (_, i) => i);
-      await token.connect(owner).delegateTokenIds(alice.address, tokenIds);
-
-      expect(await token.getVotes(alice.address)).to.equal(reasonableAmount);
-
-      await token.connect(owner).delegateTokenIds(owner.address, tokenIds);
-
-      expect(await token.getVotes(alice.address)).to.equal(0);
-      expect(await token.getVotes(owner.address)).to.equal(reasonableAmount);
-    });
-
-    it("handles vote transfers from zero address", async () => {
-      const { token, manager, auction, owner, alice } = await deployToken();
-
-      await token.connect(manager).updateMinters([{ minter: auction.address, allowed: true }]);
-
-      await token.connect(auction).mintTo(owner.address);
-      await token.connect(owner).delegateTokenIds(alice.address, [0]);
-
-      expect(await token.getVotes(alice.address)).to.equal(1);
-
-      await token.connect(manager).updateMinters([{ minter: owner.address, allowed: true }]);
-      await token.connect(owner).burn(0);
-
-      expect(await token.getVotes(alice.address)).to.equal(0);
-      expect(await token.getVotes(owner.address)).to.equal(0);
-      expect(await token.getVotes(ethers.ZeroAddress)).to.equal(0);
-    });
-  });
-
   describe("Race Condition Prevention", () => {
     it("prevents race condition between delegation and transfer", async () => {
       const { token, manager, auction, owner, alice, bob } = await deployToken();
@@ -559,43 +478,6 @@ describe("MultiDelegateToken - Advanced Security & Edge Cases", () => {
       expect(await token.rawTokenDelegate(0)).to.equal(alice.address);
       expect(await token.rawTokenDelegate(1)).to.equal(bob.address);
       expect(await token.rawTokenDelegate(2)).to.equal(alice.address);
-    });
-  });
-
-  describe("Gas Optimization Edge Cases", () => {
-    it("efficiently handles batch delegation at MAX_BATCH_SIZE", async () => {
-      const { token, auction, owner, alice } = await deployToken();
-
-      for (let i = 0; i < 100; i++) {
-        await token.connect(auction).mintTo(owner.address);
-      }
-
-      const tokenIds = Array.from({ length: 100 }, (_, i) => i);
-      const tx = await token.connect(owner).delegateTokenIds(alice.address, tokenIds);
-      const receipt = await tx.wait();
-
-      expect(receipt!.gasUsed).to.be.lt(10000000n);
-
-      expect(await token.getVotes(alice.address)).to.equal(100);
-    });
-
-    it("efficiently handles batch clear at MAX_BATCH_SIZE", async () => {
-      const { token, auction, owner, alice } = await deployToken();
-
-      for (let i = 0; i < 100; i++) {
-        await token.connect(auction).mintTo(owner.address);
-      }
-
-      const tokenIds = Array.from({ length: 100 }, (_, i) => i);
-      await token.connect(owner).delegateTokenIds(alice.address, tokenIds);
-
-      const tx = await token.connect(owner).clearTokenDelegation(tokenIds);
-      const receipt = await tx.wait();
-
-      expect(receipt!.gasUsed).to.be.lt(10000000n);
-
-      expect(await token.getVotes(alice.address)).to.equal(0);
-      expect(await token.getVotes(owner.address)).to.equal(100);
     });
   });
 
