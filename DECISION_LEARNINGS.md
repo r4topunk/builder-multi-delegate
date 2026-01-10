@@ -60,3 +60,10 @@ Template for new entries (append at end):
 - Decision summary: Added reserve mint tracking with an owner correction hook, and aligned Governor/ERC721Votes historical vote queries to block numbers.
 - Rationale: Reserve tracking prevents `remainingTokensInReserve` from underflowing after burns, while block-number snapshots ensure governance queries match checkpoint storage.
 - Implications / follow-ups: Owners should backfill `setReserveMinted` for upgraded deployments with prior reserve mints; governance integrations should keep using block numbers for `getPastVotes`.
+
+## Entry
+- Date/time (local): 2026-01-10 15:22:00 -0300
+- Related commits: 4c8fa42 (refactor: simplify delegation registry), 77a8f63 (refactor: use IERC721 interface)
+- Decision summary: Replaced the upgradeable ERC-721 token with a minimal delegation registry that reads Gnars NFT balances and supports amount-based multi-delegation with permissionless sync.
+- Rationale: The deployment target only needs split delegation for existing Gnars holders, so minting, upgradeability, and token storage versioning are unnecessary complexity.
+- Implications / follow-ups: Delegation is "soft" and can temporarily overstate votes until `syncDelegations` is called; frontends should expose sync/validation guidance and avoid assuming historical checkpoints.
