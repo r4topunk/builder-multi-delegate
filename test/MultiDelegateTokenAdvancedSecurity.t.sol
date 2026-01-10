@@ -172,6 +172,21 @@ contract MultiDelegateTokenAdvancedSecurityTest is Test {
         vm.stopPrank();
     }
 
+    // Test: Mint batch respects MAX_BATCH_SIZE
+    function testMintBatchAtMaxLimit() public {
+        vm.prank(auction);
+        token.mintBatchTo(100, owner);
+
+        assertEq(token.totalSupply(), 100);
+    }
+
+    // Test: Mint batch exceeds MAX_BATCH_SIZE
+    function testMintBatchExceedsMaxLimit() public {
+        vm.prank(auction);
+        vm.expectRevert("BATCH_SIZE_EXCEEDED");
+        token.mintBatchTo(101, owner);
+    }
+
     // Test: Prevent delegation to zero address
     function testPreventDelegationToZeroAddress() public {
         vm.prank(auction);

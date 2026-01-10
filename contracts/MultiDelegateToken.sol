@@ -250,6 +250,8 @@ contract MultiDelegateToken is
     }
 
     function mintBatchTo(uint256 amount, address recipient) external nonReentrant onlyAuctionOrMinter returns (uint256[] memory tokenIds) {
+        if (amount > _batchSizeLimit()) revert BATCH_SIZE_EXCEEDED();
+
         tokenIds = new uint256[](amount);
         for (uint256 i = 0; i < amount; ) {
             tokenIds[i] = _mintWithVesting(recipient);

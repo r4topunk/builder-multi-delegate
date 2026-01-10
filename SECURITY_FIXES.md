@@ -122,6 +122,16 @@
 
 ---
 
+### 12. Mint Batch Size Enforcement ✅
+**Issue:** `mintBatchTo()` did not enforce the batch size limit, allowing large mints that can revert due to gas limits.
+
+**Fixes Applied:**
+- Added a `BATCH_SIZE_EXCEEDED` guard to `mintBatchTo()` to match delegation batch limits.
+
+**Rationale:** Keeps mint batching consistent with delegation operations and avoids liveness failures from oversized batches.
+
+---
+
 ## New Files Created
 
 ### MaliciousReentrancy.sol
@@ -150,6 +160,7 @@
 - Added `INVALID_MINTER` zero-address validation in `updateMinters()`
 - Tightened `updateFounders()` validation to include `mintCount`
 - Added owner-configurable batch size and checkpoint window
+- Enforced batch size limits in `mintBatchTo()`
 
 ### ERC721SplitVotes.sol
 - Implemented rolling checkpoint window with pruning
@@ -194,6 +205,7 @@ Key behavior changes covered by tests:
 | Minter Validation | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
 | Operator Delegation | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
 | Configurable Limits | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol, TokenStorageV4.sol |
+| Mint Batch Limit | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
 
 ---
 
