@@ -699,6 +699,72 @@ describe("MultiDelegateToken - Advanced Security & Edge Cases", () => {
         token.connect(manager).mintFromReserveTo(alice.address, 5)
       ).to.be.revertedWithCustomError(token, "TOKEN_NOT_RESERVED");
     });
+
+    it("tracks reserve after burns without underflow", async () => {
+      const [manager, auction] = await ethers.getSigners();
+
+      const Metadata = await ethers.getContractFactory("MockMetadataRenderer");
+      const metadata = await Metadata.deploy();
+
+      const Token = await ethers.getContractFactory("MultiDelegateToken");
+      const impl = await Token.connect(manager).deploy(manager.address);
+
+      const initData = Token.interface.encodeFunctionData("initialize", [
+        [],
+        encodeInitStrings(),
+        2,
+        await metadata.getAddress(),
+        auction.address,
+        manager.address,
+      ]);
+
+      const Proxy = await ethers.getContractFactory("ERC1967Proxy");
+      const proxy = await Proxy.connect(manager).deploy(await impl.getAddress(), initData);
+
+      const token = Token.attach(await proxy.getAddress());
+
+      await token.connect(manager).updateMinters([{ minter: manager.address, allowed: true }]);
+
+      await token.connect(auction).mintTo(auction.address);
+      await token.connect(auction).mintTo(auction.address);
+      await token.connect(manager).mintFromReserveTo(auction.address, 0);
+
+      await token.connect(auction).burn(2);
+      await token.connect(auction).burn(3);
+
+      expect(await token.remainingTokensInReserve()).to.equal(1);
+    });
+
+    it("allows owner to correct reserve mint count", async () => {
+      const [manager, auction, alice] = await ethers.getSigners();
+
+      const Metadata = await ethers.getContractFactory("MockMetadataRenderer");
+      const metadata = await Metadata.deploy();
+
+      const Token = await ethers.getContractFactory("MultiDelegateToken");
+      const impl = await Token.connect(manager).deploy(manager.address);
+
+      const initData = Token.interface.encodeFunctionData("initialize", [
+        [],
+        encodeInitStrings(),
+        3,
+        await metadata.getAddress(),
+        auction.address,
+        manager.address,
+      ]);
+
+      const Proxy = await ethers.getContractFactory("ERC1967Proxy");
+      const proxy = await Proxy.connect(manager).deploy(await impl.getAddress(), initData);
+
+      const token = Token.attach(await proxy.getAddress());
+
+      await expect(
+        token.connect(alice).setReserveMinted(1)
+      ).to.be.revertedWithCustomError(token, "ONLY_OWNER");
+
+      await token.connect(manager).setReserveMinted(2);
+      expect(await token.remainingTokensInReserve()).to.equal(1);
+    });
   });
 
   describe("Access Control Edge Cases", () => {

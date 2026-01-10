@@ -96,6 +96,11 @@ contract MultiDelegateToken is
     /// @param newValue The new checkpoint window
     event MaxCheckpointsUpdated(uint256 previousValue, uint256 newValue);
 
+    /// @notice Emitted when the reserve mint counter is updated
+    /// @param previousValue The previous reserve mint count
+    /// @param newValue The new reserve mint count
+    event ReserveMintedUpdated(uint256 previousValue, uint256 newValue);
+
     /// @dev Reverts when delegatee is address(0)
     error INVALID_DELEGATE();
 
@@ -110,6 +115,9 @@ contract MultiDelegateToken is
 
     /// @dev Reverts when checkpoint configuration is locked
     error CHECKPOINTS_ALREADY_INITIALIZED();
+
+    /// @dev Reverts when reserve mint count is invalid
+    error INVALID_RESERVE_MINTED();
 
     /// @dev Reverts when mint count would overflow
     error CANNOT_MINT();
@@ -236,6 +244,9 @@ contract MultiDelegateToken is
     function mintFromReserveTo(address recipient, uint256 tokenId) external nonReentrant onlyMinter {
         if (tokenId >= reservedUntilTokenId) revert TOKEN_NOT_RESERVED();
         _mint(recipient, tokenId);
+        unchecked {
+            ++reserveMinted;
+        }
     }
 
     function mintBatchTo(uint256 amount, address recipient) external nonReentrant onlyAuctionOrMinter returns (uint256[] memory tokenIds) {
@@ -411,7 +422,16 @@ contract MultiDelegateToken is
     }
 
     function remainingTokensInReserve() external view returns (uint256) {
-        uint256 totalMintedFromReserve = settings.totalSupply - settings.mintCount;
+        uint256 totalMintedFromReserve = reserveMinted;
+
+        if (totalMintedFromReserve == 0 && settings.totalSupply >= settings.mintCount) {
+            totalMintedFromReserve = settings.totalSupply - settings.mintCount;
+        }
+
+        if (totalMintedFromReserve >= reservedUntilTokenId) {
+            return 0;
+        }
+
         return reservedUntilTokenId - totalMintedFromReserve;
     }
 
@@ -453,6 +473,17 @@ contract MultiDelegateToken is
         reservedUntilTokenId = newReservedUntilTokenId;
 
         emit ReservedUntilTokenIDUpdated(newReservedUntilTokenId);
+    }
+
+    function setReserveMinted(uint256 newReserveMinted) external onlyOwner {
+        if (newReserveMinted < reserveMinted || newReserveMinted > reservedUntilTokenId) {
+            revert INVALID_RESERVE_MINTED();
+        }
+
+        uint256 previousValue = reserveMinted;
+        reserveMinted = newReserveMinted;
+
+        emit ReserveMintedUpdated(previousValue, newReserveMinted);
     }
 
     function setMetadataRenderer(IBaseMetadata newRenderer) external {

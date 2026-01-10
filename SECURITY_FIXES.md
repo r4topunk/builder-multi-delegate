@@ -95,7 +95,7 @@
 **Issue:** TokenStorageV4 had no storage gap, risking future upgrade collisions.
 
 **Fixes Applied:**
-- Added `uint256[48] private __gap;` to TokenStorageV4.
+- Added `uint256[47] private __gap;` to TokenStorageV4.
 
 **Rationale:** Preserves upgrade safety for future storage additions.
 

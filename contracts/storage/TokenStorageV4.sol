@@ -19,6 +19,9 @@ contract TokenStorageV4 {
     /// @notice Configurable checkpoint window (0 uses default)
     uint256 internal maxCheckpointsValue;
 
+    /// @notice Number of reserved token IDs minted
+    uint256 internal reserveMinted;
+
     /// @dev Storage gap for future upgrades
-    uint256[48] private __gap;
+    uint256[47] private __gap;
 }

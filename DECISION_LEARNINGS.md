@@ -53,3 +53,10 @@ Template for new entries (append at end):
 - Decision summary: Switched historical vote checkpoints to block numbers and added owner-configurable batch size and checkpoint window defaults.
 - Rationale: Block-number snapshots mitigate timestamp manipulation, while configurable limits give governance flexibility without changing the ring buffer after minting.
 - Implications / follow-ups: `getPastVotes` now expects block numbers; update off-chain tooling and set checkpoint window before minting if needed.
+
+## Entry
+- Date/time (local): 2026-01-10 14:20:00 -0300
+- Related commits: (pending)
+- Decision summary: Added reserve mint tracking with an owner correction hook, and aligned Governor/ERC721Votes historical vote queries to block numbers.
+- Rationale: Reserve tracking prevents `remainingTokensInReserve` from underflowing after burns, while block-number snapshots ensure governance queries match checkpoint storage.
+- Implications / follow-ups: Owners should backfill `setReserveMinted` for upgraded deployments with prior reserve mints; governance integrations should keep using block numbers for `getPastVotes`.
