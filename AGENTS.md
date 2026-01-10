@@ -12,6 +12,9 @@
 ## References
 - `DECISION_LEARNINGS.md`
 
+## Environment
+- Use Node.js v20 via `nvm use 20` (fish shell supported).
+
 ## Output expectations
 - Lead with findings ordered by severity.
 - Provide file/line references when possible.
