@@ -14,9 +14,12 @@ import { IAuction } from "../lib/nouns-protocol/src/auction/IAuction.sol";
 import { IToken } from "../lib/nouns-protocol/src/token/IToken.sol";
 import { VersionedContract } from "../lib/nouns-protocol/src/VersionedContract.sol";
 import { ERC721SplitVotes } from "./lib/ERC721SplitVotes.sol";
+import { TokenStorageV4 } from "./storage/TokenStorageV4.sol";
 
 /// @title MultiDelegateToken
 /// @notice A DAO's ERC-721 governance token with per-token delegation
+/// @dev Extends Builder Protocol's Token with per-token delegation capability.
+///      Each token can be delegated to a different address, enabling vote splitting.
 contract MultiDelegateToken is
     IToken,
     VersionedContract,
@@ -26,7 +29,8 @@ contract MultiDelegateToken is
     ERC721SplitVotes,
     TokenStorageV1,
     TokenStorageV2,
-    TokenStorageV3
+    TokenStorageV3,
+    TokenStorageV4
 {
     ///                                                          ///
     ///                         IMMUTABLES                       ///
@@ -62,17 +66,21 @@ contract MultiDelegateToken is
     ///                                                          ///
 
     /// @notice Emitted when a token's delegate changes
+    /// @param tokenId The token whose delegation changed
+    /// @param fromDelegate The previous delegate
+    /// @param toDelegate The new delegate
     event TokenDelegateChanged(uint256 indexed tokenId, address indexed fromDelegate, address indexed toDelegate);
 
     /// @notice Emitted when a token's delegation is cleared
+    /// @param tokenId The token whose delegation was cleared
+    /// @param previousDelegate The delegate that was removed
     event TokenDelegationCleared(uint256 indexed tokenId, address indexed previousDelegate);
 
     /// @dev Reverts when delegatee is address(0)
     error INVALID_DELEGATE();
 
-    /// @notice Token-level delegate mapping
-    /// @dev tokenId => delegate
-    mapping(uint256 => address) internal tokenDelegates;
+    /// @dev Reverts when batch size exceeds maximum
+    error BATCH_SIZE_EXCEEDED();
 
     ///                                                          ///
     ///                         CONSTRUCTOR                      ///
@@ -415,14 +423,26 @@ contract MultiDelegateToken is
     ///                                                          ///
 
     /// @notice Returns the delegate for a tokenId
+    /// @param tokenId The token to query
+    /// @return The delegate address (returns owner if no explicit delegation)
     function tokenDelegate(uint256 tokenId) external view returns (address) {
         address delegatee = tokenDelegates[tokenId];
         return delegatee == address(0) ? ownerOf(tokenId) : delegatee;
     }
 
+    /// @notice Returns the raw delegate for a tokenId (address(0) if not explicitly delegated)
+    /// @param tokenId The token to query
+    /// @return The delegate address or address(0) if using implicit owner delegation
+    function rawTokenDelegate(uint256 tokenId) external view returns (address) {
+        return tokenDelegates[tokenId];
+    }
+
     /// @notice Delegates specific tokenIds to a delegatee
+    /// @param delegatee The address to delegate votes to
+    /// @param tokenIds The token IDs to delegate
     function delegateTokenIds(address delegatee, uint256[] calldata tokenIds) external {
         if (delegatee == address(0)) revert INVALID_DELEGATE();
+        if (tokenIds.length > MAX_BATCH_SIZE) revert BATCH_SIZE_EXCEEDED();
 
         for (uint256 i = 0; i < tokenIds.length; ) {
             uint256 tokenId = tokenIds[i];
@@ -453,8 +473,11 @@ contract MultiDelegateToken is
         }
     }
 
-    /// @notice Clears delegation for specific tokenIds
+    /// @notice Clears delegation for specific tokenIds (returns votes to owner)
+    /// @param tokenIds The token IDs to clear delegation for
     function clearTokenDelegation(uint256[] calldata tokenIds) external {
+        if (tokenIds.length > MAX_BATCH_SIZE) revert BATCH_SIZE_EXCEEDED();
+
         for (uint256 i = 0; i < tokenIds.length; ) {
             uint256 tokenId = tokenIds[i];
 
@@ -476,12 +499,16 @@ contract MultiDelegateToken is
         }
     }
 
-    /// @dev Clears per-token overrides on transfer and defaults to the new owner
+    /// @dev Handles vote accounting on transfer, including clearing per-token delegation
+    /// @param _from The sender address
+    /// @param _to The recipient address
+    /// @param _tokenId The token being transferred
     function _afterTokenTransfer(
         address _from,
         address _to,
         uint256 _tokenId
     ) internal override(ERC721SplitVotes) {
+        // Self-transfers should not affect delegation
         if (_from == _to) {
             super._afterTokenTransfer(_from, _to, _tokenId);
             return;
@@ -491,11 +518,13 @@ contract MultiDelegateToken is
         address prevDelegate = currentDelegate == address(0) ? _from : currentDelegate;
         address newDelegate = _to;
 
+        // Clear any existing delegation override on transfer/burn
         if (currentDelegate != address(0)) {
             delete tokenDelegates[_tokenId];
             emit TokenDelegationCleared(_tokenId, currentDelegate);
         }
 
+        // Move votes: from previous delegate to new owner (or address(0) for burn)
         _moveDelegateVotes(prevDelegate, newDelegate, 1);
 
         super._afterTokenTransfer(_from, _to, _tokenId);

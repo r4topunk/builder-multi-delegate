@@ -6,24 +6,51 @@ import { ERC721 } from "../../lib/nouns-protocol/src/lib/token/ERC721.sol";
 import { EIP712 } from "../../lib/nouns-protocol/src/lib/utils/EIP712.sol";
 
 /// @title ERC721SplitVotes
-/// @notice ERC721Votes variant without account-level delegation
+/// @notice ERC721Votes variant that supports per-token delegation instead of account-level delegation
+/// @dev This contract maintains storage compatibility with ERC721Votes but disables account-level
+///      delegation functions. Vote tracking is handled at the token level by the inheriting contract.
 abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
-    /// @dev The EIP-712 typehash to delegate with a signature
+    ///                                                          ///
+    ///                          CONSTANTS                       ///
+    ///                                                          ///
+
+    /// @dev The EIP-712 typehash to delegate with a signature (kept for storage compatibility)
     bytes32 internal constant DELEGATION_TYPEHASH = keccak256("Delegation(address from,address to,uint256 nonce,uint256 deadline)");
 
-    /// @notice The delegate for an account (kept for storage compatibility)
+    ///                                                          ///
+    ///                           STORAGE                        ///
+    ///                                                          ///
+
+    /// @notice The delegate for an account (kept for storage compatibility with ERC721Votes)
+    /// @dev DEPRECATED: This mapping is not used in per-token delegation. It exists only to
+    ///      maintain storage layout compatibility when upgrading from ERC721Votes.
     mapping(address => address) internal delegation;
 
     /// @notice The number of checkpoints for an account
+    /// @dev Account => Num Checkpoints
     mapping(address => uint256) internal numCheckpoints;
 
     /// @notice The checkpoint for an account
+    /// @dev Account => Checkpoint Id => Checkpoint
     mapping(address => mapping(uint256 => Checkpoint)) internal checkpoints;
+
+    ///                                                          ///
+    ///                           ERRORS                         ///
+    ///                                                          ///
 
     /// @dev Reverts when using legacy account-level delegation
     error USE_TOKEN_ID_DELEGATION();
 
+    /// @dev Reverts when vote accounting would underflow
+    error VOTE_UNDERFLOW();
+
+    ///                                                          ///
+    ///                        VOTING WEIGHT                     ///
+    ///                                                          ///
+
     /// @notice The current number of votes for an account
+    /// @param _account The account address
+    /// @return The current voting weight
     function getVotes(address _account) public view returns (uint256) {
         uint256 nCheckpoints = numCheckpoints[_account];
         unchecked {
@@ -32,6 +59,9 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     }
 
     /// @notice The number of votes for an account at a past timestamp
+    /// @param _account The account address
+    /// @param _timestamp The past timestamp to query
+    /// @return The voting weight at the given timestamp
     function getPastVotes(address _account, uint256 _timestamp) public view returns (uint256) {
         if (_timestamp >= block.timestamp) revert INVALID_TIMESTAMP();
 
@@ -68,18 +98,28 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         }
     }
 
-    /// @notice The delegate for an account (legacy view, not used for vote splitting)
+    ///                                                          ///
+    ///                    DEPRECATED DELEGATION                 ///
+    ///                                                          ///
+
+    /// @notice The delegate for an account
+    /// @dev DEPRECATED: In per-token delegation, this function returns stale/meaningless data.
+    ///      Use tokenDelegate(tokenId) on the inheriting contract instead.
+    /// @param _account The account address
+    /// @return The stored delegate (may be stale after upgrade)
     function delegates(address _account) public view returns (address) {
         address current = delegation[_account];
         return current == address(0) ? _account : current;
     }
 
     /// @notice Legacy account-level delegation (disabled)
+    /// @dev Always reverts. Use delegateTokenIds() instead.
     function delegate(address) external pure virtual {
         revert USE_TOKEN_ID_DELEGATION();
     }
 
     /// @notice Legacy account-level delegation via signature (disabled)
+    /// @dev Always reverts. Use delegateTokenIds() instead.
     function delegateBySig(
         address,
         address,
@@ -91,48 +131,71 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         revert USE_TOKEN_ID_DELEGATION();
     }
 
-    /// @dev Transfers voting weight
+    ///                                                          ///
+    ///                      VOTE ACCOUNTING                     ///
+    ///                                                          ///
+
+    /// @dev Transfers voting weight between delegates
+    /// @param _from The address losing votes (address(0) for mint)
+    /// @param _to The address gaining votes (address(0) for burn)
+    /// @param _amount The number of votes to transfer
     function _moveDelegateVotes(
         address _from,
         address _to,
         uint256 _amount
     ) internal {
-        unchecked {
-            if (_from != _to && _amount > 0) {
-                if (_from != address(0)) {
-                    uint256 newCheckpointId = numCheckpoints[_from];
-                    uint256 prevCheckpointId;
-                    uint256 prevTotalVotes;
-                    uint256 prevTimestamp;
+        if (_from == _to || _amount == 0) return;
 
-                    if (newCheckpointId != 0) {
-                        prevCheckpointId = newCheckpointId - 1;
-                        prevTotalVotes = checkpoints[_from][prevCheckpointId].votes;
-                        prevTimestamp = checkpoints[_from][prevCheckpointId].timestamp;
-                    }
+        if (_from != address(0)) {
+            uint256 newCheckpointId = numCheckpoints[_from];
+            uint256 prevCheckpointId;
+            uint256 prevTotalVotes;
+            uint256 prevTimestamp;
 
-                    _writeCheckpoint(_from, newCheckpointId, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes - _amount);
+            if (newCheckpointId != 0) {
+                unchecked {
+                    prevCheckpointId = newCheckpointId - 1;
                 }
+                prevTotalVotes = checkpoints[_from][prevCheckpointId].votes;
+                prevTimestamp = checkpoints[_from][prevCheckpointId].timestamp;
+            }
 
-                if (_to != address(0)) {
-                    uint256 nCheckpoints = numCheckpoints[_to];
-                    uint256 prevCheckpointId;
-                    uint256 prevTotalVotes;
-                    uint256 prevTimestamp;
+            // Explicit underflow check - critical for security
+            if (prevTotalVotes < _amount) revert VOTE_UNDERFLOW();
 
-                    if (nCheckpoints != 0) {
-                        prevCheckpointId = nCheckpoints - 1;
-                        prevTotalVotes = checkpoints[_to][prevCheckpointId].votes;
-                        prevTimestamp = checkpoints[_to][prevCheckpointId].timestamp;
-                    }
+            unchecked {
+                _writeCheckpoint(_from, newCheckpointId, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes - _amount);
+            }
+        }
 
-                    _writeCheckpoint(_to, nCheckpoints, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes + _amount);
+        if (_to != address(0)) {
+            uint256 nCheckpoints = numCheckpoints[_to];
+            uint256 prevCheckpointId;
+            uint256 prevTotalVotes;
+            uint256 prevTimestamp;
+
+            if (nCheckpoints != 0) {
+                unchecked {
+                    prevCheckpointId = nCheckpoints - 1;
                 }
+                prevTotalVotes = checkpoints[_to][prevCheckpointId].votes;
+                prevTimestamp = checkpoints[_to][prevCheckpointId].timestamp;
+            }
+
+            // Safe addition - votes are bounded by total token supply which fits in uint192
+            unchecked {
+                _writeCheckpoint(_to, nCheckpoints, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes + _amount);
             }
         }
     }
 
     /// @dev Records a checkpoint
+    /// @param _account The account address
+    /// @param _newId The new checkpoint id
+    /// @param _prevId The previous checkpoint id
+    /// @param _prevTimestamp The previous checkpoint timestamp
+    /// @param _prevTotalVotes The previous checkpoint voting weight
+    /// @param _newTotalVotes The new checkpoint voting weight
     function _writeCheckpoint(
         address _account,
         uint256 _newId,
@@ -155,7 +218,10 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         }
     }
 
-    /// @dev No automatic vote movement on transfer
+    /// @dev Hook called after token transfer - override in inheriting contract to handle delegation
+    /// @param _from The sender address
+    /// @param _to The recipient address
+    /// @param _tokenId The ERC-721 token id
     function _afterTokenTransfer(
         address _from,
         address _to,
