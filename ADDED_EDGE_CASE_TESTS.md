@@ -49,8 +49,8 @@ TypeScript/Hardhat-based tests covering 800+ lines of edge case scenarios.
   - Tests founder vesting with delegation
 
 - **Gas Optimization Edge Cases**
-  - Tests batch delegation at MAX_BATCH_SIZE (100 tokens)
-  - Tests batch clear at MAX_BATCH_SIZE
+  - Tests batch delegation at DEFAULT_MAX_BATCH_SIZE (100 tokens)
+  - Tests batch clear at DEFAULT_MAX_BATCH_SIZE
 
 - **Access Control Edge Cases**
   - Tests calling onlyManager functions from unauthorized addresses
@@ -68,7 +68,7 @@ Foundry-based Solidity tests for direct Solidity-level testing with 200+ lines.
 - Checkpoint retention window (1000 checkpoint limit)
 - Vote accounting integrity
 - Race condition prevention
-- Batch operation boundaries (MAX_BATCH_SIZE = 100)
+- Batch operation boundaries (DEFAULT_MAX_BATCH_SIZE = 100)
 - Storage layout compatibility
 - Zero address edge cases
 - Access control edge cases
@@ -96,9 +96,10 @@ Tests verify the `_moveDelegateVotes` function prevents:
 - Invalid vote transfers
 
 ### 4. Batch Operation DoS Prevention
-Tests verify `MAX_BATCH_SIZE` constant (100) prevents:
+Tests verify `DEFAULT_MAX_BATCH_SIZE` constant (100) prevents:
 - Out-of-gas errors from oversized arrays
 - Potential DoS vectors through large batch operations
+- Owner-configurable limits are respected when updated
 
 ### 5. Race Conditions
 Tests ensure atomic operations prevent:
@@ -109,7 +110,7 @@ Tests ensure atomic operations prevent:
 ## Edge Cases Covered
 
 ### Boundary Conditions
-- ✅ MAX_BATCH_SIZE = 100 (exactly at limit, exceeding limit)
+- ✅ DEFAULT_MAX_BATCH_SIZE = 100 (exactly at limit, exceeding limit)
 - ✅ MAX_CHECKPOINTS = 1000 (near limit, exceeding limit)
 - ✅ uint88 max for mint count
 - ✅ uint192 max for vote accounting
@@ -203,7 +204,7 @@ forge test -vvv
 ### Mitigated Vulnerabilities
 - ✅ Reentrancy (via ReentrancyGuard)
 - ✅ Checkpoint Lockout (rolling window via MAX_CHECKPOINTS)
-- ✅ Batch DoS (via MAX_BATCH_SIZE)
+- ✅ Batch DoS (via DEFAULT_MAX_BATCH_SIZE)
 - ✅ Vote Underflow (via explicit checks)
 - ✅ Unauthorized Delegation (owner or approved operator required)
 - ✅ Zero Address Delegation (via INVALID_DELEGATE error)

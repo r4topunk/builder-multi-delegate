@@ -10,7 +10,7 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
  *      - Vote accounting overflow/underflow (uint192 boundaries)
  *      - Checkpoint compression and boundary queries
  *      - Founder vesting at exact boundaries
- *      - Batch operation limits (MAX_BATCH_SIZE)
+ *      - Batch operation limits (DEFAULT_MAX_BATCH_SIZE)
  *      - Delegation/clear of non-existent and burned tokens
  *      - Transfer and burn edge cases
  *      - Access control boundaries
@@ -50,6 +50,13 @@ describe("MultiDelegateToken - Edge Cases", () => {
     const token = Token.attach(await proxy.getAddress());
 
     return { token, metadata, manager, auction, owner, alice, bob, charlie, dave };
+  }
+
+  async function deploySplitVotesHarness() {
+    const Harness = await ethers.getContractFactory("SplitVotesHarness");
+    const harness = await Harness.deploy();
+    await harness.initialize();
+    return harness;
   }
 
   describe("Mint Overflow Edge Cases", () => {
@@ -92,6 +99,29 @@ describe("MultiDelegateToken - Edge Cases", () => {
   });
 
   describe("Vote Accounting Overflow/Underflow", () => {
+    it("reverts when moving votes from an empty checkpoint set", async () => {
+      const harness = await deploySplitVotesHarness();
+      const [, alice] = await ethers.getSigners();
+
+      await expect(
+        harness.moveVotes(alice.address, ethers.ZeroAddress, 1)
+      ).to.be.revertedWithCustomError(harness, "VOTE_UNDERFLOW");
+    });
+
+    it("reverts when votes would overflow uint192", async () => {
+      const harness = await deploySplitVotesHarness();
+      const [, alice] = await ethers.getSigners();
+
+      const maxUint192 = 2n ** 192n - 1n;
+
+      await harness.seedCheckpoint(alice.address, 0, 1, maxUint192);
+      await harness.setCheckpointMeta(alice.address, 0, 1);
+
+      await expect(
+        harness.moveVotes(ethers.ZeroAddress, alice.address, 1)
+      ).to.be.revertedWithCustomError(harness, "VOTE_UNDERFLOW");
+    });
+
     it("reverts when votes would underflow during delegation", async () => {
       const { token, auction, owner, alice } = await deployToken();
 
@@ -140,14 +170,14 @@ describe("MultiDelegateToken - Edge Cases", () => {
       await token.connect(auction).mintTo(owner.address);
       await token.connect(auction).mintTo(owner.address);
 
-      const tsBefore = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const blockBefore = (await ethers.provider.getBlock("latest"))!.number;
 
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
       await token.connect(owner).delegateTokenIds(bob.address, [1]);
       await token.connect(owner).delegateTokenIds(owner.address, [0]);
       await ethers.provider.send("evm_mine", []);
 
-      expect(await token.getPastVotes(owner.address, tsBefore)).to.equal(2);
+      expect(await token.getPastVotes(owner.address, blockBefore)).to.equal(2);
       expect(await token.getVotes(owner.address)).to.equal(1);
       expect(await token.getVotes(alice.address)).to.equal(0);
       expect(await token.getVotes(bob.address)).to.equal(1);
@@ -158,20 +188,18 @@ describe("MultiDelegateToken - Edge Cases", () => {
 
       await token.connect(auction).mintTo(owner.address);
 
-      const ts1 = (await ethers.provider.getBlock("latest"))!.timestamp;
-      await ethers.provider.send("evm_increaseTime", [10]);
+      const block1 = (await ethers.provider.getBlock("latest"))!.number;
       await ethers.provider.send("evm_mine", []);
 
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
-      const ts2 = (await ethers.provider.getBlock("latest"))!.timestamp;
-      await ethers.provider.send("evm_increaseTime", [10]);
+      const block2 = (await ethers.provider.getBlock("latest"))!.number;
       await ethers.provider.send("evm_mine", []);
 
-      expect(await token.getPastVotes(owner.address, ts1)).to.equal(1);
-      expect(await token.getPastVotes(alice.address, ts1)).to.equal(0);
+      expect(await token.getPastVotes(owner.address, block1)).to.equal(1);
+      expect(await token.getPastVotes(alice.address, block1)).to.equal(0);
 
-      expect(await token.getPastVotes(owner.address, ts2)).to.equal(0);
-      expect(await token.getPastVotes(alice.address, ts2)).to.equal(1);
+      expect(await token.getPastVotes(owner.address, block2)).to.equal(0);
+      expect(await token.getPastVotes(alice.address, block2)).to.equal(1);
     });
 
     it("handles getPastVotes for accounts with no checkpoints", async () => {
@@ -584,6 +612,38 @@ describe("MultiDelegateToken - Edge Cases", () => {
       expect(await token.getVotes(alice.address)).to.equal(0);
       expect(await token.getVotes(owner.address)).to.equal(3);
     });
+
+    it("respects updated batch size limits", async () => {
+      const { token, manager, auction, owner, alice } = await deployToken();
+
+      for (let i = 0; i < 6; i++) {
+        await token.connect(auction).mintTo(owner.address);
+      }
+
+      await token.connect(manager).setMaxBatchSize(5);
+
+      const tokenIds = Array.from({ length: 6 }, (_, i) => i);
+      await expect(
+        token.connect(owner).delegateTokenIds(alice.address, tokenIds)
+      ).to.be.revertedWithCustomError(token, "BATCH_SIZE_EXCEEDED");
+
+      await expect(
+        token.connect(owner).delegateTokenIds(alice.address, tokenIds.slice(0, 5))
+      ).to.not.be.reverted;
+    });
+
+    it("locks checkpoint window updates after minting", async () => {
+      const { token, manager, auction, owner } = await deployToken();
+
+      await token.connect(manager).setMaxCheckpoints(500);
+      expect(await token.maxCheckpoints()).to.equal(500);
+
+      await token.connect(auction).mintTo(owner.address);
+
+      await expect(
+        token.connect(manager).setMaxCheckpoints(400)
+      ).to.be.revertedWithCustomError(token, "CHECKPOINTS_ALREADY_INITIALIZED");
+    });
   });
 
   describe("Reserve Minting Edge Cases", () => {
@@ -660,33 +720,33 @@ describe("MultiDelegateToken - Edge Cases", () => {
 
       await token.connect(auction).mintTo(owner.address);
 
-      const ts = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const blockNumber = (await ethers.provider.getBlock("latest"))!.number;
 
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
-      await ethers.provider.send("evm_increaseTime", [1]);
       await ethers.provider.send("evm_mine", []);
 
-      expect(await token.getPastVotes(alice.address, ts)).to.equal(0);
+      expect(await token.getPastVotes(alice.address, blockNumber)).to.equal(0);
       expect(await token.getVotes(alice.address)).to.equal(1);
     });
 
-    it("handles getPastVotes for future timestamp", async () => {
+    it("handles getPastVotes for future block", async () => {
       const { token, auction, owner } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
 
-      const currentTs = (await ethers.provider.getBlock("latest"))!.timestamp;
-      const futureTs = currentTs + 1000;
+      const currentBlock = (await ethers.provider.getBlock("latest"))!.number;
+      const futureBlock = currentBlock + 1;
 
-      await expect(token.getPastVotes(owner.address, futureTs)).to.be.revertedWithCustomError(token, "INVALID_TIMESTAMP");
+      await expect(token.getPastVotes(owner.address, futureBlock)).to.be.revertedWithCustomError(token, "INVALID_TIMESTAMP");
     });
 
     it("handles getPastVotes before any checkpoints", async () => {
       const { token, owner, alice } = await deployToken();
 
-      const pastTs = (await ethers.provider.getBlock("latest"))!.timestamp - 100;
+      const currentBlock = (await ethers.provider.getBlock("latest"))!.number;
+      await ethers.provider.send("evm_mine", []);
 
-      expect(await token.getPastVotes(alice.address, pastTs)).to.equal(0);
+      expect(await token.getPastVotes(alice.address, currentBlock)).to.equal(0);
     });
 
     it("handles voting weight after complex operations", async () => {

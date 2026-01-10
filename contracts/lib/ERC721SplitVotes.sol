@@ -34,7 +34,7 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     /// @dev Account => Checkpoint Id => Checkpoint
     mapping(address => mapping(uint256 => Checkpoint)) internal checkpoints;
 
-    /// @notice Maximum number of checkpoints retained per account to prevent bloat attacks
+    /// @notice Default maximum number of checkpoints retained per account to prevent bloat attacks
     uint256 internal constant MAX_CHECKPOINTS = 1000;
     uint256 internal constant CHECKPOINT_INDEX_SHIFT = 128;
 
@@ -65,35 +65,37 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         uint256 packed = numCheckpoints[_account];
         uint256 nCheckpoints = uint256(uint128(packed));
         uint256 start = packed >> CHECKPOINT_INDEX_SHIFT;
+        uint256 maxCheckpoints = _maxCheckpoints();
         unchecked {
             if (nCheckpoints == 0) return 0;
-            uint256 lastIndex = _checkpointIndex(start, nCheckpoints - 1);
+            uint256 lastIndex = _checkpointIndex(start, nCheckpoints - 1, maxCheckpoints);
             return checkpoints[_account][lastIndex].votes;
         }
     }
 
-    /// @notice The number of votes for an account at a past timestamp
+    /// @notice The number of votes for an account at a past block
     /// @param _account The account address
-    /// @param _timestamp The past timestamp to query
-    /// @return The voting weight at the given timestamp
-    function getPastVotes(address _account, uint256 _timestamp) public view returns (uint256) {
-        if (_timestamp >= block.timestamp) revert INVALID_TIMESTAMP();
+    /// @param _blockNumber The past block number to query
+    /// @return The voting weight at the given block number
+    function getPastVotes(address _account, uint256 _blockNumber) public view returns (uint256) {
+        if (_blockNumber >= block.number) revert INVALID_TIMESTAMP();
 
         uint256 packed = numCheckpoints[_account];
         uint256 nCheckpoints = uint256(uint128(packed));
         uint256 start = packed >> CHECKPOINT_INDEX_SHIFT;
         if (nCheckpoints == 0) return 0;
 
+        uint256 maxCheckpoints = _maxCheckpoints();
         mapping(uint256 => Checkpoint) storage accountCheckpoints = checkpoints[_account];
 
         unchecked {
             uint256 lastCheckpoint = nCheckpoints - 1;
-            uint256 oldestIndex = _checkpointIndex(start, 0);
-            uint256 newestIndex = _checkpointIndex(start, lastCheckpoint);
+            uint256 oldestIndex = _checkpointIndex(start, 0, maxCheckpoints);
+            uint256 newestIndex = _checkpointIndex(start, lastCheckpoint, maxCheckpoints);
 
-            if (accountCheckpoints[newestIndex].timestamp <= _timestamp) return accountCheckpoints[newestIndex].votes;
-            if (accountCheckpoints[oldestIndex].timestamp > _timestamp) {
-                if (nCheckpoints == MAX_CHECKPOINTS && start != 0) revert CHECKPOINTS_PRUNED();
+            if (accountCheckpoints[newestIndex].timestamp <= _blockNumber) return accountCheckpoints[newestIndex].votes;
+            if (accountCheckpoints[oldestIndex].timestamp > _blockNumber) {
+                if (nCheckpoints == maxCheckpoints && start != 0) revert CHECKPOINTS_PRUNED();
                 return 0;
             }
 
@@ -104,18 +106,18 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
 
             while (high > low) {
                 middle = high - (high - low) / 2;
-                cp = accountCheckpoints[_checkpointIndex(start, middle)];
+                cp = accountCheckpoints[_checkpointIndex(start, middle, maxCheckpoints)];
 
-                if (cp.timestamp == _timestamp) {
+                if (cp.timestamp == _blockNumber) {
                     return cp.votes;
-                } else if (cp.timestamp < _timestamp) {
+                } else if (cp.timestamp < _blockNumber) {
                     low = middle;
                 } else {
                     high = middle - 1;
                 }
             }
 
-            return accountCheckpoints[_checkpointIndex(start, low)].votes;
+            return accountCheckpoints[_checkpointIndex(start, low, maxCheckpoints)].votes;
         }
     }
 
@@ -225,14 +227,14 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
 
         if (checkpointCount == 0) return (0, 0, 0, checkpointStart);
 
-        uint256 lastIndex = _checkpointIndex(checkpointStart, checkpointCount - 1);
+        uint256 lastIndex = _checkpointIndex(checkpointStart, checkpointCount - 1, _maxCheckpoints());
         Checkpoint storage checkpoint = checkpoints[_account][lastIndex];
         return (checkpoint.votes, checkpoint.timestamp, checkpointCount, checkpointStart);
     }
 
     /// @dev Records a checkpoint
     /// @param _account The account address
-    /// @param _prevTimestamp The previous checkpoint timestamp
+    /// @param _prevTimestamp The previous checkpoint block number
     /// @param _prevTotalVotes The previous checkpoint voting weight
     /// @param _newTotalVotes The new checkpoint voting weight
     function _writeCheckpoint(
@@ -243,26 +245,27 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         uint256 _prevTotalVotes,
         uint256 _newTotalVotes
     ) private {
+        uint256 maxCheckpoints = _maxCheckpoints();
         unchecked {
-            if (_count > 0 && _prevTimestamp == block.timestamp) {
-                uint256 lastIndex = _checkpointIndex(_start, _count - 1);
+            if (_count > 0 && _prevTimestamp == block.number) {
+                uint256 lastIndex = _checkpointIndex(_start, _count - 1, maxCheckpoints);
                 checkpoints[_account][lastIndex].votes = uint192(_newTotalVotes);
             } else {
                 uint256 writeIndex;
-                if (_count < MAX_CHECKPOINTS) {
-                    writeIndex = _checkpointIndex(_start, _count);
+                if (_count < maxCheckpoints) {
+                    writeIndex = _checkpointIndex(_start, _count, maxCheckpoints);
                     ++_count;
                 } else {
                     writeIndex = _start;
                     _start = _start + 1;
-                    if (_start == MAX_CHECKPOINTS) {
+                    if (_start == maxCheckpoints) {
                         _start = 0;
                     }
                 }
 
                 Checkpoint storage checkpoint = checkpoints[_account][writeIndex];
                 checkpoint.votes = uint192(_newTotalVotes);
-                checkpoint.timestamp = uint64(block.timestamp);
+                checkpoint.timestamp = uint64(block.number);
             }
 
             numCheckpoints[_account] = (_start << CHECKPOINT_INDEX_SHIFT) | _count;
@@ -271,11 +274,16 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
         }
     }
 
+    /// @dev Returns the maximum number of checkpoints retained
+    function _maxCheckpoints() internal view virtual returns (uint256) {
+        return MAX_CHECKPOINTS;
+    }
+
     /// @dev Returns the physical checkpoint index for a logical offset in the ring buffer
-    function _checkpointIndex(uint256 _start, uint256 _offset) private pure returns (uint256) {
+    function _checkpointIndex(uint256 _start, uint256 _offset, uint256 maxCheckpoints_) private pure returns (uint256) {
         uint256 index = _start + _offset;
-        if (index >= MAX_CHECKPOINTS) {
-            index -= MAX_CHECKPOINTS;
+        if (index >= maxCheckpoints_) {
+            index -= maxCheckpoints_;
         }
         return index;
     }

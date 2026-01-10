@@ -9,10 +9,16 @@ contract TokenStorageV4 {
     /// @dev tokenId => delegate address (address(0) means delegated to owner)
     mapping(uint256 => address) internal tokenDelegates;
 
-    /// @notice Maximum number of token IDs that can be processed in a single batch operation
+    /// @notice Default maximum number of token IDs that can be processed in a single batch operation
     /// @dev Prevents out-of-gas issues and potential DoS vectors
-    uint256 internal constant MAX_BATCH_SIZE = 100;
+    uint256 internal constant DEFAULT_MAX_BATCH_SIZE = 100;
+
+    /// @notice Configurable batch size limit (0 uses default)
+    uint256 internal maxBatchSizeValue;
+
+    /// @notice Configurable checkpoint window (0 uses default)
+    uint256 internal maxCheckpointsValue;
 
     /// @dev Storage gap for future upgrades
-    uint256[50] private __gap;
+    uint256[48] private __gap;
 }

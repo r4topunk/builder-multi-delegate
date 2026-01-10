@@ -132,17 +132,16 @@ describe("MultiDelegateToken", () => {
       ).to.be.revertedWithCustomError(token, "USE_TOKEN_ID_DELEGATION");
     });
 
-    it("tracks past votes by timestamp", async () => {
+    it("tracks past votes by block number", async () => {
       const { token, auction, owner, alice } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
-      const currentTs = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const currentBlock = (await ethers.provider.getBlock("latest"))!.number;
 
-      await ethers.provider.send("evm_increaseTime", [2]);
       await ethers.provider.send("evm_mine", []);
 
-      const pastVotes = await token.getPastVotes(alice.address, currentTs);
+      const pastVotes = await token.getPastVotes(alice.address, currentBlock);
       expect(pastVotes).to.equal(1);
     });
 
@@ -522,62 +521,57 @@ describe("MultiDelegateToken", () => {
 
       await token.connect(auction).mintTo(owner.address);
 
-      // Record timestamp after mint
-      const ts1 = (await ethers.provider.getBlock("latest"))!.timestamp;
+      // Record block after mint
+      const block1 = (await ethers.provider.getBlock("latest"))!.number;
 
-      await ethers.provider.send("evm_increaseTime", [10]);
       await ethers.provider.send("evm_mine", []);
 
       // Delegate to alice
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
-      const ts2 = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const block2 = (await ethers.provider.getBlock("latest"))!.number;
 
-      await ethers.provider.send("evm_increaseTime", [10]);
       await ethers.provider.send("evm_mine", []);
 
       // Redelegate to bob
       await token.connect(owner).delegateTokenIds(bob.address, [0]);
-      const ts3 = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const block3 = (await ethers.provider.getBlock("latest"))!.number;
 
-      await ethers.provider.send("evm_increaseTime", [10]);
       await ethers.provider.send("evm_mine", []);
 
       // Check historical values
-      expect(await token.getPastVotes(owner.address, ts1)).to.equal(1);
-      expect(await token.getPastVotes(alice.address, ts1)).to.equal(0);
+      expect(await token.getPastVotes(owner.address, block1)).to.equal(1);
+      expect(await token.getPastVotes(alice.address, block1)).to.equal(0);
 
-      expect(await token.getPastVotes(owner.address, ts2)).to.equal(0);
-      expect(await token.getPastVotes(alice.address, ts2)).to.equal(1);
+      expect(await token.getPastVotes(owner.address, block2)).to.equal(0);
+      expect(await token.getPastVotes(alice.address, block2)).to.equal(1);
 
-      expect(await token.getPastVotes(alice.address, ts3)).to.equal(0);
-      expect(await token.getPastVotes(bob.address, ts3)).to.equal(1);
+      expect(await token.getPastVotes(alice.address, block3)).to.equal(0);
+      expect(await token.getPastVotes(bob.address, block3)).to.equal(1);
     });
 
-    it("getPastVotes reverts for future timestamp", async () => {
+    it("getPastVotes reverts for future block", async () => {
       const { token, auction, owner } = await deployToken();
 
       await token.connect(auction).mintTo(owner.address);
-      const currentTs = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const currentBlock = (await ethers.provider.getBlock("latest"))!.number;
 
       await expect(
-        token.getPastVotes(owner.address, currentTs + 1000)
+        token.getPastVotes(owner.address, currentBlock + 1)
       ).to.be.revertedWithCustomError(token, "INVALID_TIMESTAMP");
     });
 
-    it("getPastVotes returns 0 for timestamp before first checkpoint", async () => {
+    it("getPastVotes returns 0 for block before first checkpoint", async () => {
       const { token, auction, owner, alice } = await deployToken();
 
-      const tsBeforeMint = (await ethers.provider.getBlock("latest"))!.timestamp;
+      const blockBeforeMint = (await ethers.provider.getBlock("latest"))!.number;
 
-      await ethers.provider.send("evm_increaseTime", [10]);
       await token.connect(auction).mintTo(owner.address);
       await token.connect(owner).delegateTokenIds(alice.address, [0]);
 
-      await ethers.provider.send("evm_increaseTime", [10]);
       await ethers.provider.send("evm_mine", []);
 
       // Alice had no votes before mint
-      expect(await token.getPastVotes(alice.address, tsBeforeMint)).to.equal(0);
+      expect(await token.getPastVotes(alice.address, blockBeforeMint)).to.equal(0);
     });
   });
 

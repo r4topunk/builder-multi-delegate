@@ -68,7 +68,7 @@ describe("Critical Vulnerability Proofs", function () {
       // Step 2: Attacker alternates delegation to rotate checkpoints beyond the retention window
       const tokenIds = Array.from({ length: attackTokenCount }, (_, i) => i);
       const rounds = 550; // 1100 checkpoints > MAX_CHECKPOINTS (1000)
-      let firstTimestamp: number | null = null;
+      let firstBlock: number | null = null;
 
       console.log("\n→ Rotating checkpoints beyond retention window...");
 
@@ -76,9 +76,9 @@ describe("Critical Vulnerability Proofs", function () {
         const tx = await token.connect(attacker).delegateTokenIds(victim.address, tokenIds);
         const receipt = await tx.wait();
 
-        if (firstTimestamp === null && receipt) {
+        if (firstBlock === null && receipt) {
           const block = await ethers.provider.getBlock(receipt.blockNumber);
-          firstTimestamp = block!.timestamp;
+          firstBlock = block!.number;
         }
 
         await token.connect(attacker).clearTokenDelegation(tokenIds);
@@ -94,9 +94,9 @@ describe("Critical Vulnerability Proofs", function () {
       expect(await token.getVotes(victim.address)).to.equal(attackTokenCount);
 
       // Step 4: Old history is pruned rather than locking the delegate
-      expect(firstTimestamp).to.not.equal(null);
+      expect(firstBlock).to.not.equal(null);
       await expect(
-        token.getPastVotes(victim.address, firstTimestamp!)
+        token.getPastVotes(victim.address, firstBlock!)
       ).to.be.revertedWithCustomError(token, "CHECKPOINTS_PRUNED");
 
       console.log("\n✓ Delegation remains live after checkpoint rollover");
@@ -147,40 +147,31 @@ describe("Critical Vulnerability Proofs", function () {
     });
   });
 
-  describe("MEDIUM: Timestamp Manipulation in getPastVotes", function () {
-    it("Should demonstrate timestamp manipulation risk", async function () {
-      console.log("\n=== TIMESTAMP MANIPULATION RISK ===\n");
+  describe("MEDIUM: Block Number Validation in getPastVotes", function () {
+    it("Should use block numbers for historical queries", async function () {
+      console.log("\n=== BLOCK NUMBER VALIDATION ===\n");
 
       // Mint and delegate
       await token.connect(auction).mintTo(user1.address);
       await token.connect(user1).delegateTokenIds(user2.address, [0]);
 
-      // Get current timestamp
       const block = await ethers.provider.getBlock("latest");
-      const currentTimestamp = block!.timestamp;
+      const currentBlock = block!.number;
 
-      console.log(`Current block timestamp: ${currentTimestamp}`);
+      console.log(`Current block number: ${currentBlock}`);
 
-      // In reality, miner could manipulate by ~15 seconds
-      console.log("\n⚠️  VULNERABILITY:");
-      console.log("   - Miners can manipulate block.timestamp by ~15 seconds");
-      console.log("   - getPastVotes() uses block.timestamp for validation");
-      console.log("   - Near proposal boundaries, votes could shift");
-      console.log("   - Recommendation: Use block.number instead\n");
-
-      // Demonstrate the issue
       const votes = await token.getVotes(user2.address);
       console.log(`Current votes for user2: ${votes}`);
 
-      // If querying at timestamp boundary, results could vary
       await expect(
-        token.getPastVotes(user2.address, currentTimestamp)
+        token.getPastVotes(user2.address, currentBlock)
       ).to.be.revertedWithCustomError(token, "INVALID_TIMESTAMP");
 
-      // But querying 1 second in past works
-      const pastVotes = await token.getPastVotes(user2.address, currentTimestamp - 1);
-      console.log(`Past votes (t-1): ${pastVotes}`);
-      console.log("→ 15 second manipulation window exists\n");
+      await ethers.provider.send("evm_mine", []);
+
+      const pastVotes = await token.getPastVotes(user2.address, currentBlock);
+      console.log(`Past votes (block-1): ${pastVotes}`);
+      console.log("→ Uses block.number instead of timestamp\n");
     });
   });
 
@@ -188,14 +179,14 @@ describe("Critical Vulnerability Proofs", function () {
     it("Mitigation: storage gap reserved in TokenStorageV4", async function () {
       console.log("\n=== STORAGE COLLISION RISK ===\n");
 
-      // TokenStorageV4 has no storage gaps
-      // If we add TokenStorageV5 with new variables, they could collide
+      // TokenStorageV4 reserves a storage gap for upgrades
+      // New variables should consume the gap before adding new storage slots
 
       console.log("Current storage layout:");
       console.log("  TokenStorageV1: founder[], tokenRecipient[], settings, reservedUntilTokenId");
       console.log("  TokenStorageV2: minter[]");
       console.log("  TokenStorageV3: (additional fields)");
-      console.log("  TokenStorageV4: tokenDelegates[], MAX_BATCH_SIZE");
+      console.log("  TokenStorageV4: tokenDelegates[], DEFAULT_MAX_BATCH_SIZE, config");
       console.log("\n✅ MITIGATION:");
       console.log("   - TokenStorageV4 now reserves a __gap for future upgrades");
       console.log("   - Future storage additions can extend safely without collisions\n");

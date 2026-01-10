@@ -95,9 +95,30 @@
 **Issue:** TokenStorageV4 had no storage gap, risking future upgrade collisions.
 
 **Fixes Applied:**
-- Added `uint256[50] private __gap;` to TokenStorageV4.
+- Added `uint256[48] private __gap;` to TokenStorageV4.
 
 **Rationale:** Preserves upgrade safety for future storage additions.
+
+---
+
+### 10. Historical Votes Use Block Numbers ✅
+**Issue:** `getPastVotes()` relied on `block.timestamp`, which is mildly miner-manipulable.
+
+**Fixes Applied:**
+- Switched historical vote checkpoints and queries to use `block.number`.
+
+**Rationale:** Prevents timestamp manipulation from affecting governance snapshots.
+
+---
+
+### 11. Configurable Batch Size and Checkpoint Window ✅
+**Issue:** `DEFAULT_MAX_BATCH_SIZE` and the checkpoint window were fixed, limiting governance flexibility.
+
+**Fixes Applied:**
+- Added owner-configurable `maxBatchSize()` and `maxCheckpoints()` with safe defaults.
+- Locked checkpoint window updates once minting begins to preserve ring-buffer indexing.
+
+**Rationale:** Allows governance to tune limits while preserving vote integrity.
 
 ---
 
@@ -112,6 +133,13 @@
 - Configurable reentrancy depth and attempts
 - Used in security test suite to verify reentrancy protection
 
+### SplitVotesHarness.sol
+**Purpose:** Test harness for vote checkpoint edge cases.
+
+**Features:**
+- Exposes `_moveDelegateVotes` for underflow/overflow testing
+- Seeds checkpoints for boundary simulations
+
 ---
 
 ## Contracts Modified
@@ -121,13 +149,16 @@
 - Allowed approved ERC-721 operators to delegate/clear
 - Added `INVALID_MINTER` zero-address validation in `updateMinters()`
 - Tightened `updateFounders()` validation to include `mintCount`
+- Added owner-configurable batch size and checkpoint window
 
 ### ERC721SplitVotes.sol
 - Implemented rolling checkpoint window with pruning
 - Packed checkpoint metadata to track ring buffer start and count
 - Added `CHECKPOINTS_PRUNED` error for out-of-window history queries
+- Switched historical vote checkpoints to block numbers
 
 ### TokenStorageV4.sol
+- Added configurable batch size and checkpoint window storage
 - Added storage gap for upgrade safety
 
 ---
@@ -159,27 +190,23 @@ Key behavior changes covered by tests:
 | Vote Overflow | 🟡 Medium | ✅ Fixed | ERC721SplitVotes.sol:176 |
 | Founders Update | 🟡 Medium | ✅ Fixed | MultiDelegateToken.sol |
 | Metadata Renderer DoS | 🟡 Medium | ✅ Fixed | MultiDelegateToken.sol |
+| Block Number Snapshots | 🟡 Medium | ✅ Fixed | ERC721SplitVotes.sol |
 | Minter Validation | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
 | Operator Delegation | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol |
+| Configurable Limits | 🟢 Low | ✅ Fixed | MultiDelegateToken.sol, TokenStorageV4.sol |
 
 ---
 
 ## Remaining Considerations
 
 ### Low Priority Issues (Not Addressed)
-1. **Checkpoint History Window**: `getPastVotes()` reverts with `CHECKPOINTS_PRUNED` for timestamps older than the retained window
-   - **Recommendation**: Ensure governance snapshots fall within the rolling window
+1. **Checkpoint History Window**: `getPastVotes()` reverts with `CHECKPOINTS_PRUNED` for blocks older than the retained window
+   - **Recommendation**: Ensure governance snapshots fall within the rolling window or adjust before minting
 
-2. **MAX_BATCH_SIZE**: Limit of 100 may be restrictive for legitimate use cases
-   - **Recommendation**: Make configurable via constructor parameter
-
-3. **Dead Code**: Legacy `delegate()` and `delegateBySig()` functions remain disabled
+2. **Dead Code**: Legacy `delegate()` and `delegateBySig()` functions remain disabled
    - **Recommendation**: Remove in future major version to reduce attack surface
 
-4. **Timestamp Manipulation**: `getPastVotes()` uses `block.timestamp` which can be manipulated
-   - **Recommendation**: Consider `block.number` for governance-critical queries
-
-5. **Missing NatSpec**: Some functions lack comprehensive documentation
+3. **Missing NatSpec**: Some functions lack comprehensive documentation
    - **Recommendation**: Add detailed NatSpec for all public/external functions
 
 ---
@@ -197,7 +224,6 @@ Key behavior changes covered by tests:
 
 ## Recommendations for Future Improvements
 
-1. **Expose Checkpoint Window**: Consider making the retention window configurable
-2. **Upgrade Block Number**: Consider using `block.number` instead of `block.timestamp`
-3. **Implement Delegation Pause**: Add emergency pause functionality for delegation operations
-4. **Add Time-Lock for Founders**: Require time-lock for critical founder changes
+1. **Implement Delegation Pause**: Add emergency pause functionality for delegation operations
+2. **Add Time-Lock for Founders**: Require time-lock for critical founder changes
+3. **Expand NatSpec Coverage**: Add detailed NatSpec for all public/external functions

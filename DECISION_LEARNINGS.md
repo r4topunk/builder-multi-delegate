@@ -46,3 +46,10 @@ Template for new entries (append at end):
 - Decision summary: Consolidated test suite by removing 160 lines of redundant tests across advancedSecurity.test.ts and edgeCases.test.ts. Removed duplicate MAX_BATCH_SIZE boundary tests, vote accounting overflow tests, gas optimization tests, and empty batch operation tests. Tests are now organized with multiDelegateToken.test.ts as primary coverage, criticalVulnerabilities.test.ts for attack proofs, edgeCases.test.ts for boundary conditions, and advancedSecurity.test.ts for security-focused scenarios.
 - Rationale: Duplicate tests increase maintenance burden, slow CI, and create inconsistency risk when updating behavior. The main test file already covers core functionality comprehensively, making specialized files redundant for basic scenarios. This refactoring improves test maintainability while preserving unique coverage for security-critical and edge cases.
 - Implications / follow-ups: Test execution time reduced ~5-10%; easier to identify gaps vs redundant coverage; future test additions should check existing files first to avoid duplication; consider adding test categorization comments to clarify purpose of each test file.
+
+## Entry
+- Date/time (local): 2026-01-10 13:55:00 -0300
+- Related commits: (pending)
+- Decision summary: Switched historical vote checkpoints to block numbers and added owner-configurable batch size and checkpoint window defaults.
+- Rationale: Block-number snapshots mitigate timestamp manipulation, while configurable limits give governance flexibility without changing the ring buffer after minting.
+- Implications / follow-ups: `getPastVotes` now expects block numbers; update off-chain tooling and set checkpoint window before minting if needed.

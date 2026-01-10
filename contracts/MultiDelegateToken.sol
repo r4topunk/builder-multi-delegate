@@ -86,11 +86,30 @@ contract MultiDelegateToken is
     /// @param returnedFalse Whether the renderer returned false instead of reverting
     event MetadataRendererFailed(uint256 indexed tokenId, address indexed renderer, bytes reason, bool returnedFalse);
 
+    /// @notice Emitted when the batch size limit changes
+    /// @param previousValue The previous batch size limit
+    /// @param newValue The new batch size limit
+    event MaxBatchSizeUpdated(uint256 previousValue, uint256 newValue);
+
+    /// @notice Emitted when the checkpoint window changes
+    /// @param previousValue The previous checkpoint window
+    /// @param newValue The new checkpoint window
+    event MaxCheckpointsUpdated(uint256 previousValue, uint256 newValue);
+
     /// @dev Reverts when delegatee is address(0)
     error INVALID_DELEGATE();
 
     /// @dev Reverts when batch size exceeds maximum
     error BATCH_SIZE_EXCEEDED();
+
+    /// @dev Reverts when batch size is invalid
+    error INVALID_BATCH_SIZE();
+
+    /// @dev Reverts when checkpoint window is invalid
+    error INVALID_MAX_CHECKPOINTS();
+
+    /// @dev Reverts when checkpoint configuration is locked
+    error CHECKPOINTS_ALREADY_INITIALIZED();
 
     /// @dev Reverts when mint count would overflow
     error CANNOT_MINT();
@@ -253,8 +272,6 @@ contract MultiDelegateToken is
             }
         } catch (bytes memory reason) {
             emit MetadataRendererFailed(_tokenId, address(settings.metadataRenderer), reason, false);
-        } catch {
-            emit MetadataRendererFailed(_tokenId, address(settings.metadataRenderer), "", false);
         }
     }
 
@@ -446,6 +463,33 @@ contract MultiDelegateToken is
         settings.metadataRenderer = newRenderer;
     }
 
+    function maxBatchSize() external view returns (uint256) {
+        return _batchSizeLimit();
+    }
+
+    function maxCheckpoints() external view returns (uint256) {
+        return _maxCheckpoints();
+    }
+
+    function setMaxBatchSize(uint256 newMaxBatchSize) external onlyOwner {
+        if (newMaxBatchSize == 0) revert INVALID_BATCH_SIZE();
+
+        uint256 previousValue = _batchSizeLimit();
+        maxBatchSizeValue = newMaxBatchSize;
+
+        emit MaxBatchSizeUpdated(previousValue, newMaxBatchSize);
+    }
+
+    function setMaxCheckpoints(uint256 newMaxCheckpoints) external onlyOwner {
+        if (newMaxCheckpoints == 0) revert INVALID_MAX_CHECKPOINTS();
+        if (settings.totalSupply > 0 || settings.mintCount > 0) revert CHECKPOINTS_ALREADY_INITIALIZED();
+
+        uint256 previousValue = _maxCheckpoints();
+        maxCheckpointsValue = newMaxCheckpoints;
+
+        emit MaxCheckpointsUpdated(previousValue, newMaxCheckpoints);
+    }
+
     ///                                                          ///
     ///                         DELEGATION                       ///
     ///                                                          ///
@@ -470,7 +514,7 @@ contract MultiDelegateToken is
     /// @param tokenIds The token IDs to delegate
     function delegateTokenIds(address delegatee, uint256[] calldata tokenIds) external nonReentrant {
         if (delegatee == address(0)) revert INVALID_DELEGATE();
-        if (tokenIds.length > MAX_BATCH_SIZE) revert BATCH_SIZE_EXCEEDED();
+        if (tokenIds.length > _batchSizeLimit()) revert BATCH_SIZE_EXCEEDED();
 
         for (uint256 i = 0; i < tokenIds.length; ) {
             uint256 tokenId = tokenIds[i];
@@ -504,7 +548,7 @@ contract MultiDelegateToken is
     /// @notice Clears delegation for specific tokenIds (returns votes to owner)
     /// @param tokenIds The token IDs to clear delegation for
     function clearTokenDelegation(uint256[] calldata tokenIds) external nonReentrant {
-        if (tokenIds.length > MAX_BATCH_SIZE) revert BATCH_SIZE_EXCEEDED();
+        if (tokenIds.length > _batchSizeLimit()) revert BATCH_SIZE_EXCEEDED();
 
         for (uint256 i = 0; i < tokenIds.length; ) {
             uint256 tokenId = tokenIds[i];
@@ -534,6 +578,14 @@ contract MultiDelegateToken is
         uint256 tokenId
     ) internal view returns (bool) {
         return spender == tokenOwner || operatorApprovals[tokenOwner][spender] || tokenApprovals[tokenId] == spender;
+    }
+
+    function _batchSizeLimit() internal view returns (uint256) {
+        return maxBatchSizeValue == 0 ? DEFAULT_MAX_BATCH_SIZE : maxBatchSizeValue;
+    }
+
+    function _maxCheckpoints() internal view override returns (uint256) {
+        return maxCheckpointsValue == 0 ? MAX_CHECKPOINTS : maxCheckpointsValue;
     }
 
     /// @dev Handles vote accounting on transfer, including clearing per-token delegation

@@ -26,6 +26,8 @@ Context:
   - [ ] Auto-delegate to owner on mint/transfer.
 - [ ] Preserve IVotes compatibility (getVotes/getPastVotes) for Governor integration.
 - [ ] Add events for per-token delegation and revocation.
+- [x] Use block numbers for historical vote snapshots.
+- [x] Add configurable batch size and checkpoint window (owner-only, pre-mint for checkpoints).
 - [ ] Set up Hardhat + TS project:
   - [ ] hardhat.config.ts with Base RPC via env var
   - [ ] TypeChain + Ethers + Chai

@@ -43,9 +43,18 @@ function tokenDelegate(uint256 tokenId) external view returns (address);
 ### Read votes (Governor expects this)
 ```solidity
 function getVotes(address account) external view returns (uint256);
-function getPastVotes(address account, uint256 timestamp) external view returns (uint256);
+function getPastVotes(address account, uint256 blockNumber) external view returns (uint256);
 ```
-Note: `getPastVotes` can revert with `CHECKPOINTS_PRUNED` if the timestamp is older than the retained checkpoint window.
+Note: `getPastVotes` expects a past block number and can revert with `CHECKPOINTS_PRUNED` if the block is older than the retained checkpoint window.
+
+### Admin configuration (owner-only)
+```solidity
+function maxBatchSize() external view returns (uint256);
+function setMaxBatchSize(uint256 newMaxBatchSize) external;
+function maxCheckpoints() external view returns (uint256);
+function setMaxCheckpoints(uint256 newMaxCheckpoints) external;
+```
+`setMaxCheckpoints` is only allowed before any minting occurs to preserve ring-buffer indexing.
 
 ## Example Calls (ethers v6)
 ```ts
@@ -67,7 +76,8 @@ const votes = await token.getVotes(delegatee);
 - Votes are available immediately on mint/transfer via auto-delegation to the owner.
 - After transfer, explicit delegation for that tokenId is cleared and votes move to the new owner.
 - For split delegation, show the user how many tokenIds are delegated to each address.
-- Historical vote queries retain a sliding window of the most recent 1000 checkpoints per delegate.
+- Historical vote queries use block numbers and retain a sliding window of the most recent 1000 checkpoints per delegate by default.
+- Batch delegation defaults to 100 tokenIds per call and is owner-configurable.
 
 ## Upgrade Notes
 - The new token implementation must be registered by the Builder manager and upgraded via Governor/Executor.
