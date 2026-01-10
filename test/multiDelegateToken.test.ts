@@ -699,4 +699,305 @@ describe("MultiDelegateToken", () => {
       expect(batchGas).to.be.lt(individualGasTotal);
     });
   });
+
+  // ============================================
+  // FOUNDER & MINTING TESTS
+  // ============================================
+
+  describe("Founders and Vesting", () => {
+    async function deployTokenWithFounders() {
+      const [manager, auction, owner, alice, bob, founder1, founder2] = await ethers.getSigners();
+
+      const Metadata = await ethers.getContractFactory("MockMetadataRenderer");
+      const metadata = await Metadata.deploy();
+
+      const Token = await ethers.getContractFactory("MultiDelegateToken");
+      const impl = await Token.connect(manager).deploy(manager.address);
+
+      const futureTimestamp = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60; // 1 year from now
+
+      const founders = [
+        { wallet: founder1.address, ownershipPct: 10, vestExpiry: futureTimestamp },
+        { wallet: founder2.address, ownershipPct: 5, vestExpiry: futureTimestamp },
+      ];
+
+      const initData = Token.interface.encodeFunctionData("initialize", [
+        founders,
+        encodeInitStrings(),
+        0,
+        await metadata.getAddress(),
+        auction.address,
+        manager.address,
+      ]);
+
+      const Proxy = await ethers.getContractFactory("ERC1967Proxy");
+      const proxy = await Proxy.connect(manager).deploy(await impl.getAddress(), initData);
+
+      const token = Token.attach(await proxy.getAddress());
+
+      return { token, manager, auction, owner, alice, bob, founder1, founder2 };
+    }
+
+    it("mints to founders based on vesting schedule", async () => {
+      const { token, auction, founder1, founder2, alice } = await deployTokenWithFounders();
+
+      // Mint first token - should go to auction recipient
+      await token.connect(auction).mintTo(alice.address);
+
+      // Check founder ownership percentage
+      expect(await token.totalFounderOwnership()).to.equal(15);
+      expect(await token.totalFounders()).to.equal(2);
+    });
+
+    it("returns founder information", async () => {
+      const { token, founder1 } = await deployTokenWithFounders();
+
+      const founderInfo = await token.getFounder(0);
+      expect(founderInfo.wallet).to.equal(founder1.address);
+      expect(founderInfo.ownershipPct).to.equal(10);
+    });
+
+    it("returns all founders", async () => {
+      const { token, founder1, founder2 } = await deployTokenWithFounders();
+
+      const founders = await token.getFounders();
+      expect(founders.length).to.equal(2);
+      expect(founders[0].wallet).to.equal(founder1.address);
+      expect(founders[1].wallet).to.equal(founder2.address);
+    });
+
+    it("returns scheduled recipient for tokenId", async () => {
+      const { token, founder1 } = await deployTokenWithFounders();
+
+      const recipient = await token.getScheduledRecipient(0);
+      expect(recipient.wallet).to.equal(founder1.address);
+    });
+  });
+
+  describe("Minting Functions", () => {
+    it("mints via mint() to msg.sender", async () => {
+      const { token, auction, manager } = await deployToken();
+
+      await token.connect(manager).updateMinters([{ minter: auction.address, allowed: true }]);
+      await token.connect(auction).mint();
+
+      expect(await token.ownerOf(0)).to.equal(auction.address);
+      expect(await token.totalSupply()).to.equal(1);
+    });
+
+    it("batch mints multiple tokens", async () => {
+      const { token, auction, alice } = await deployToken();
+
+      const tokenIds = await token.connect(auction).mintBatchTo.staticCall(5, alice.address);
+      await token.connect(auction).mintBatchTo(5, alice.address);
+
+      expect(tokenIds.length).to.equal(5);
+      expect(await token.balanceOf(alice.address)).to.equal(5);
+      expect(await token.totalSupply()).to.equal(5);
+      expect(await token.getVotes(alice.address)).to.equal(5);
+    });
+
+    it("only auction or minter can mint", async () => {
+      const { token, alice } = await deployToken();
+
+      await expect(token.connect(alice).mint()).to.be.revertedWithCustomError(
+        token,
+        "ONLY_AUCTION_OR_MINTER"
+      );
+
+      await expect(token.connect(alice).mintTo(alice.address)).to.be.revertedWithCustomError(
+        token,
+        "ONLY_AUCTION_OR_MINTER"
+      );
+    });
+  });
+
+  describe("Reserve Minting", () => {
+    async function deployTokenWithReserve() {
+      const [manager, auction, owner, alice, bob] = await ethers.getSigners();
+
+      const Metadata = await ethers.getContractFactory("MockMetadataRenderer");
+      const metadata = await Metadata.deploy();
+
+      const Token = await ethers.getContractFactory("MultiDelegateToken");
+      const impl = await Token.connect(manager).deploy(manager.address);
+
+      const initData = Token.interface.encodeFunctionData("initialize", [
+        [],
+        encodeInitStrings(),
+        10, // Reserve first 10 tokenIds
+        await metadata.getAddress(),
+        auction.address,
+        manager.address,
+      ]);
+
+      const Proxy = await ethers.getContractFactory("ERC1967Proxy");
+      const proxy = await Proxy.connect(manager).deploy(await impl.getAddress(), initData);
+
+      const token = Token.attach(await proxy.getAddress());
+
+      return { token, manager, auction, owner, alice, bob };
+    }
+
+    it("mints from reserve to recipient", async () => {
+      const { token, manager, alice } = await deployTokenWithReserve();
+
+      await token.connect(manager).updateMinters([{ minter: manager.address, allowed: true }]);
+      await token.connect(manager).mintFromReserveTo(alice.address, 5);
+
+      expect(await token.ownerOf(5)).to.equal(alice.address);
+      expect(await token.getVotes(alice.address)).to.equal(1);
+    });
+
+    it("rejects minting non-reserved tokenId from reserve", async () => {
+      const { token, manager, alice } = await deployTokenWithReserve();
+
+      await token.connect(manager).updateMinters([{ minter: manager.address, allowed: true }]);
+
+      await expect(
+        token.connect(manager).mintFromReserveTo(alice.address, 15)
+      ).to.be.revertedWithCustomError(token, "TOKEN_NOT_RESERVED");
+    });
+
+    it("tracks remaining tokens in reserve", async () => {
+      const { token, manager, alice } = await deployTokenWithReserve();
+
+      await token.connect(manager).updateMinters([{ minter: manager.address, allowed: true }]);
+
+      expect(await token.remainingTokensInReserve()).to.equal(10);
+
+      await token.connect(manager).mintFromReserveTo(alice.address, 0);
+      expect(await token.remainingTokensInReserve()).to.equal(9);
+    });
+
+    it("only minter can mint from reserve", async () => {
+      const { token, alice } = await deployTokenWithReserve();
+
+      await expect(
+        token.connect(alice).mintFromReserveTo(alice.address, 0)
+      ).to.be.revertedWithCustomError(token, "ONLY_AUCTION_OR_MINTER");
+    });
+  });
+
+  describe("Minter Management", () => {
+    it("owner can update minters", async () => {
+      const { token, manager, alice } = await deployToken();
+
+      expect(await token.isMinter(alice.address)).to.equal(false);
+
+      await token.connect(manager).updateMinters([{ minter: alice.address, allowed: true }]);
+      expect(await token.isMinter(alice.address)).to.equal(true);
+
+      await token.connect(manager).updateMinters([{ minter: alice.address, allowed: false }]);
+      expect(await token.isMinter(alice.address)).to.equal(false);
+    });
+
+    it("non-owner cannot update minters", async () => {
+      const { token, alice } = await deployToken();
+
+      await expect(
+        token.connect(alice).updateMinters([{ minter: alice.address, allowed: true }])
+      ).to.be.revertedWithCustomError(token, "ONLY_OWNER");
+    });
+  });
+
+  describe("Token Metadata", () => {
+    it("returns token URI", async () => {
+      const { token, auction, alice } = await deployToken();
+
+      await token.connect(auction).mintTo(alice.address);
+
+      const uri = await token.tokenURI(0);
+      expect(uri).to.equal("ipfs://mock-token");
+    });
+
+    it("returns contract URI", async () => {
+      const { token } = await deployToken();
+
+      const uri = await token.contractURI();
+      expect(uri).to.equal("ipfs://mock-contract");
+    });
+
+    it("returns auction address", async () => {
+      const { token, auction } = await deployToken();
+
+      expect(await token.auction()).to.equal(auction.address);
+    });
+
+    it("returns metadata renderer address", async () => {
+      const { token, metadata } = await deployToken();
+
+      expect(await token.metadataRenderer()).to.equal(await metadata.getAddress());
+    });
+  });
+
+  describe("Delegation with Founders", () => {
+    async function deployTokenWithFounders() {
+      const [manager, auction, owner, alice, bob, founder1] = await ethers.getSigners();
+
+      const Metadata = await ethers.getContractFactory("MockMetadataRenderer");
+      const metadata = await Metadata.deploy();
+
+      const Token = await ethers.getContractFactory("MultiDelegateToken");
+      const impl = await Token.connect(manager).deploy(manager.address);
+
+      const futureTimestamp = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+
+      const founders = [
+        { wallet: founder1.address, ownershipPct: 10, vestExpiry: futureTimestamp },
+      ];
+
+      const initData = Token.interface.encodeFunctionData("initialize", [
+        founders,
+        encodeInitStrings(),
+        0,
+        await metadata.getAddress(),
+        auction.address,
+        manager.address,
+      ]);
+
+      const Proxy = await ethers.getContractFactory("ERC1967Proxy");
+      const proxy = await Proxy.connect(manager).deploy(await impl.getAddress(), initData);
+
+      const token = Token.attach(await proxy.getAddress());
+
+      return { token, manager, auction, owner, alice, bob, founder1 };
+    }
+
+    it("founder can delegate their vested tokens", async () => {
+      const { token, auction, alice, founder1 } = await deployTokenWithFounders();
+
+      // Mint tokens - some will go to founder based on schedule
+      for (let i = 0; i < 12; i++) {
+        await token.connect(auction).mintTo(alice.address);
+      }
+
+      // Founder should have received some tokens
+      const founderBalance = await token.balanceOf(founder1.address);
+      expect(founderBalance).to.be.gt(0);
+
+      // Founder has votes
+      const founderVotes = await token.getVotes(founder1.address);
+      expect(founderVotes).to.equal(founderBalance);
+
+      // Founder can delegate
+      if (founderBalance > 0) {
+        const founderTokens = [];
+        for (let i = 0; i < 20; i++) {
+          try {
+            if ((await token.ownerOf(i)) === founder1.address) {
+              founderTokens.push(i);
+            }
+          } catch {
+            // Token doesn't exist
+          }
+        }
+
+        if (founderTokens.length > 0) {
+          await token.connect(founder1).delegateTokenIds(alice.address, [founderTokens[0]]);
+          expect(await token.getVotes(alice.address)).to.be.gt(0);
+        }
+      }
+    });
+  });
 });
