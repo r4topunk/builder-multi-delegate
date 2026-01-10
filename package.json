@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "build": "hardhat compile",
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "test:hardhat": "hardhat test",
+    "test:foundry": "forge test"
   },
   "repository": {
     "type": "git",

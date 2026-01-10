@@ -5,7 +5,7 @@ Context:
 - DAO: Gnars (Builder frontend)
 - Scope: governance voting only
 - Votes auto-delegate to the owner; explicit delegation overrides per token
-- Tests: Hardhat + TypeScript
+- Tests: Hardhat (TS) + Foundry (Solidity)
 
 ## Task List
 - [ ] Confirm Solidity version and Builder/Nouns Builder contract dependencies used by Gnars to preserve compatibility and storage layout.
@@ -31,6 +31,7 @@ Context:
 - [ ] Set up Hardhat + TS project:
   - [ ] hardhat.config.ts with Base RPC via env var
   - [ ] TypeChain + Ethers + Chai
+- [ ] Maintain Foundry Solidity tests for security scenarios
 - [ ] Write tests (TS):
   - [ ] Split delegation across multiple delegates
   - [ ] Redelegation of a tokenId
