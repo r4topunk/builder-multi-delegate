@@ -82,6 +82,9 @@ contract MultiDelegateToken is
     /// @dev Reverts when batch size exceeds maximum
     error BATCH_SIZE_EXCEEDED();
 
+    /// @dev Reverts when mint count would overflow
+    error CANNOT_MINT();
+
     ///                                                          ///
     ///                         CONSTRUCTOR                      ///
     ///                                                          ///
@@ -216,6 +219,7 @@ contract MultiDelegateToken is
     function _mintWithVesting(address recipient) internal returns (uint256 tokenId) {
         unchecked {
             do {
+                if (settings.mintCount == type(uint88).max) revert CANNOT_MINT();
                 tokenId = reservedUntilTokenId + settings.mintCount++;
             } while (_isForFounder(tokenId));
         }
@@ -313,6 +317,8 @@ contract MultiDelegateToken is
     }
 
     function updateFounders(IManager.FounderParams[] calldata newFounders) external onlyOwner {
+        if (settings.totalSupply > 0) revert CANNOT_CHANGE_RESERVE();
+
         uint256 numFounders = settings.numFounders;
         Founder[] memory cachedFounders = new Founder[](numFounders);
 
@@ -440,7 +446,7 @@ contract MultiDelegateToken is
     /// @notice Delegates specific tokenIds to a delegatee
     /// @param delegatee The address to delegate votes to
     /// @param tokenIds The token IDs to delegate
-    function delegateTokenIds(address delegatee, uint256[] calldata tokenIds) external {
+    function delegateTokenIds(address delegatee, uint256[] calldata tokenIds) external nonReentrant {
         if (delegatee == address(0)) revert INVALID_DELEGATE();
         if (tokenIds.length > MAX_BATCH_SIZE) revert BATCH_SIZE_EXCEEDED();
 
@@ -475,7 +481,7 @@ contract MultiDelegateToken is
 
     /// @notice Clears delegation for specific tokenIds (returns votes to owner)
     /// @param tokenIds The token IDs to clear delegation for
-    function clearTokenDelegation(uint256[] calldata tokenIds) external {
+    function clearTokenDelegation(uint256[] calldata tokenIds) external nonReentrant {
         if (tokenIds.length > MAX_BATCH_SIZE) revert BATCH_SIZE_EXCEEDED();
 
         for (uint256 i = 0; i < tokenIds.length; ) {

@@ -34,6 +34,9 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
     /// @dev Account => Checkpoint Id => Checkpoint
     mapping(address => mapping(uint256 => Checkpoint)) internal checkpoints;
 
+    /// @notice Maximum number of checkpoints per account to prevent bloat attacks
+    uint256 internal constant MAX_CHECKPOINTS = 1000;
+
     ///                                                          ///
     ///                           ERRORS                         ///
     ///                                                          ///
@@ -43,6 +46,9 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
 
     /// @dev Reverts when vote accounting would underflow
     error VOTE_UNDERFLOW();
+
+    /// @dev Reverts when maximum number of checkpoints is exceeded
+    error TOO_MANY_CHECKPOINTS();
 
     ///                                                          ///
     ///                        VOTING WEIGHT                     ///
@@ -182,7 +188,9 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
                 prevTimestamp = checkpoints[_to][prevCheckpointId].timestamp;
             }
 
-            // Safe addition - votes are bounded by total token supply which fits in uint192
+            // Check for overflow before adding
+            if (prevTotalVotes + _amount > type(uint192).max) revert VOTE_UNDERFLOW();
+
             unchecked {
                 _writeCheckpoint(_to, nCheckpoints, prevCheckpointId, prevTimestamp, prevTotalVotes, prevTotalVotes + _amount);
             }
@@ -208,6 +216,8 @@ abstract contract ERC721SplitVotes is IERC721Votes, EIP712, ERC721 {
             if (_newId > 0 && _prevTimestamp == block.timestamp) {
                 checkpoints[_account][_prevId].votes = uint192(_newTotalVotes);
             } else {
+                if (numCheckpoints[_account] >= MAX_CHECKPOINTS) revert TOO_MANY_CHECKPOINTS();
+
                 Checkpoint storage checkpoint = checkpoints[_account][_newId];
                 checkpoint.votes = uint192(_newTotalVotes);
                 checkpoint.timestamp = uint64(block.timestamp);
