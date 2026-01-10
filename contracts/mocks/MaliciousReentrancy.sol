@@ -50,9 +50,11 @@ contract MaliciousReentrancy is IERC721Receiver {
         require(msg.sender == address(this), "Self-call only");
         require(token != address(0), "Token not set");
 
-        (bool success, bytes memory data) = token.call(
+        (bool success, ) = token.call(
             abi.encodeWithSignature("delegateTokenIds(address,uint256[])", address(this), new uint256[](0))
         );
+        if (!success) {
+        }
     }
 
     function setToken(address _token) external {
