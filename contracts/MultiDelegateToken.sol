@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.16;
 
-interface IERC721Balance {
-    function balanceOf(address owner) external view returns (uint256);
-}
+import { IERC721 } from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /// @title MultiDelegateToken
 /// @notice Delegation registry that splits NFT voting power by amount
 /// @dev Uses an external ERC-721 balance as source of truth (Gnars)
 contract MultiDelegateToken {
-    IERC721Balance public immutable gnarsToken;
+    IERC721 public immutable gnarsToken;
 
     mapping(address => mapping(address => uint256)) public delegatedAmount;
     mapping(address => uint256) public totalDelegated;
@@ -33,7 +31,7 @@ contract MultiDelegateToken {
 
     constructor(address tokenAddress) {
         if (tokenAddress == address(0)) revert INVALID_TOKEN_ADDRESS();
-        gnarsToken = IERC721Balance(tokenAddress);
+        gnarsToken = IERC721(tokenAddress);
     }
 
     /// @notice Returns the current votes for an account
