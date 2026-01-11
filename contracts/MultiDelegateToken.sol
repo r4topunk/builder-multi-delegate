@@ -9,6 +9,8 @@ import { IERC721 } from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 contract MultiDelegateToken {
     IERC721 public immutable gnarsToken;
 
+    uint256 public constant MAX_DELEGATES_PER_OWNER = 50;
+
     mapping(address => mapping(address => uint256)) public delegatedAmount;
     mapping(address => uint256) public totalDelegated;
     mapping(address => uint256) public delegateVotes;
@@ -19,6 +21,7 @@ contract MultiDelegateToken {
     error INVALID_DELEGATE();
     error INVALID_TOKEN_ADDRESS();
     error INSUFFICIENT_BALANCE();
+    error MAX_DELEGATES_EXCEEDED();
 
     event DelegationUpdated(
         address indexed owner,
@@ -126,6 +129,7 @@ contract MultiDelegateToken {
 
     function _addDelegate(address owner, address delegatee) internal {
         if (ownerDelegateIndex[owner][delegatee] != 0) return;
+        if (ownerDelegates[owner].length >= MAX_DELEGATES_PER_OWNER) revert MAX_DELEGATES_EXCEEDED();
 
         ownerDelegates[owner].push(delegatee);
         ownerDelegateIndex[owner][delegatee] = ownerDelegates[owner].length;
