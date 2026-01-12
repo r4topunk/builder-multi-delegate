@@ -61,4 +61,27 @@ describe("MultiDelegateToken", () => {
     expect(await delegation.totalDelegated(owner.address)).to.equal(0);
     expect(await delegation.getVotes(owner.address)).to.equal(1);
   });
+
+  it("enforces a cap on delegate count", async () => {
+    const { gnars, delegation, owner } = await deploy();
+    const maxDelegates = Number(await delegation.MAX_DELEGATES_PER_OWNER());
+
+    await gnars.mint(owner.address, maxDelegates);
+
+    for (let i = 0; i < maxDelegates; i++) {
+      const delegatee = ethers.Wallet.createRandom().address;
+      await delegation.connect(owner).delegate(delegatee, 1);
+    }
+
+    const overflowDelegate = ethers.Wallet.createRandom().address;
+    await expect(
+      delegation.connect(owner).delegate(overflowDelegate, 1)
+    ).to.be.revertedWithCustomError(delegation, "MAX_DELEGATES_EXCEEDED");
+
+    const delegates = await delegation.getDelegates(owner.address);
+    await delegation.connect(owner).clearDelegation(delegates[0]);
+
+    await delegation.connect(owner).delegate(overflowDelegate, 1);
+    expect(await delegation.delegateVotes(overflowDelegate)).to.equal(1);
+  });
 });
