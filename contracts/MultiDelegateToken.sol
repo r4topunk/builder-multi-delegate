@@ -99,13 +99,14 @@ contract MultiDelegateToken {
         _clearAllDelegations(msg.sender);
     }
 
-    /// @notice Clears all delegations if balance dropped below total delegated
+    /// @notice Reduces delegations if balance dropped below total delegated
     /// @dev Permissionless to allow vote correction after transfers
     function syncDelegations(address owner) external {
         uint256 balance = gnarsToken.balanceOf(owner);
-        if (balance >= totalDelegated[owner]) return;
+        uint256 delegated = totalDelegated[owner];
+        if (balance >= delegated) return;
 
-        _clearAllDelegations(owner);
+        _reduceDelegations(owner, delegated - balance);
     }
 
     function _requireAvailable(address owner, uint256 increase) internal view {
@@ -150,6 +151,39 @@ contract MultiDelegateToken {
 
         ownerDelegates[owner].pop();
         delete ownerDelegateIndex[owner][delegatee];
+    }
+
+    function _reduceDelegations(address owner, uint256 excess) internal {
+        address[] storage delegates = ownerDelegates[owner];
+        uint256 index = delegates.length;
+
+        while (excess > 0 && index > 0) {
+            unchecked {
+                index--;
+            }
+
+            address delegatee = delegates[index];
+            uint256 amount = delegatedAmount[owner][delegatee];
+            if (amount == 0) {
+                _removeDelegate(owner, delegatee);
+                continue;
+            }
+
+            if (amount > excess) {
+                delegatedAmount[owner][delegatee] = amount - excess;
+                totalDelegated[owner] -= excess;
+                _decreaseVotes(delegatee, excess);
+                emit DelegationUpdated(owner, delegatee, amount, amount - excess);
+                excess = 0;
+            } else {
+                delegatedAmount[owner][delegatee] = 0;
+                totalDelegated[owner] -= amount;
+                _decreaseVotes(delegatee, amount);
+                emit DelegationUpdated(owner, delegatee, amount, 0);
+                _removeDelegate(owner, delegatee);
+                excess -= amount;
+            }
+        }
     }
 
     function _clearAllDelegations(address owner) internal {

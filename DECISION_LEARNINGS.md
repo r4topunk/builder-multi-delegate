@@ -67,3 +67,10 @@ Template for new entries (append at end):
 - Decision summary: Replaced the upgradeable ERC-721 token with a minimal delegation registry that reads Gnars NFT balances and supports amount-based multi-delegation with permissionless sync.
 - Rationale: The deployment target only needs split delegation for existing Gnars holders, so minting, upgradeability, and token storage versioning are unnecessary complexity.
 - Implications / follow-ups: Delegation is "soft" and can temporarily overstate votes until `syncDelegations` is called; frontends should expose sync/validation guidance and avoid assuming historical checkpoints.
+
+## Entry
+- Date/time (local): 2026-01-12 17:35:44 -03
+- Related commits: (pending)
+- Decision summary: Sync now reduces only excess delegated votes instead of clearing all delegations when balances drop.
+- Rationale: Partial reductions preserve delegation intent while correcting overstated votes after transfers.
+- Implications / follow-ups: Delegates added last are reduced first; document this behavior for users and frontends, and consider exposing sync guidance.

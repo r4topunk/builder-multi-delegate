@@ -21,11 +21,10 @@ describe("MultiDelegateToken - Delegation Safety", () => {
     await delegation.connect(owner).delegate(alice.address, 2);
     await gnars.connect(owner).transferFrom(owner.address, bob.address, 2);
 
-    await expect(delegation.connect(bob).syncDelegations(owner.address)).to.emit(
-      delegation,
-      "DelegationsCleared"
-    );
+    await delegation.connect(bob).syncDelegations(owner.address);
 
-    expect(await delegation.getVotes(owner.address)).to.equal(1);
+    expect(await delegation.delegateVotes(alice.address)).to.equal(1);
+    expect(await delegation.totalDelegated(owner.address)).to.equal(1);
+    expect(await delegation.getVotes(owner.address)).to.equal(0);
   });
 });

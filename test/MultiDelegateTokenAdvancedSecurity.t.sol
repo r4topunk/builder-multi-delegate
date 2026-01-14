@@ -1,230 +1,140 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.16;
 
-import { Test, console } from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 import { MultiDelegateToken } from "../contracts/MultiDelegateToken.sol";
-import { MockMetadataRenderer } from "../contracts/mocks/MockMetadataRenderer.sol";
-import { ERC1967Proxy } from "../lib/nouns-protocol/src/lib/proxy/ERC1967Proxy.sol";
-import { MaliciousReentrancy } from "../contracts/mocks/MaliciousReentrancy.sol";
-import { IManager } from "../lib/nouns-protocol/src/manager/IManager.sol";
-
-/**
- * @title MultiDelegateToken Advanced Security & Edge Cases Tests
- * @notice Foundry-based tests for advanced security scenarios and edge cases
- */
+import { MockERC721 } from "../lib/nouns-protocol/test/utils/mocks/MockERC721.sol";
 
 contract MultiDelegateTokenAdvancedSecurityTest is Test {
     MultiDelegateToken internal token;
-    MockMetadataRenderer internal metadata;
-    MaliciousReentrancy internal malicious;
-    ERC1967Proxy internal proxy;
+    MockERC721 internal gnars;
 
-    address internal manager;
-    address internal auction;
     address internal owner;
     address internal alice;
     address internal bob;
-    address internal charlie;
     address internal dave;
 
-    struct MinterParams {
-        address minter;
-        bool allowed;
-    }
-
     function setUp() public {
-        manager = address(this);
-        auction = address(0xA11CE);
         owner = address(0xCAB);
-        alice = address(0xDEADBEEF);
-        bob = address(0xFEEDBEEF);
-        charlie = address(0xBAADF00D);
-        dave = address(0xFACEB00C);
+        alice = address(0xA11CE);
+        bob = address(0xB0B);
+        dave = address(0xDAVE);
 
-        vm.label(manager, "MANAGER");
-        vm.label(auction, "AUCTION");
-        vm.label(owner, "OWNER");
-        vm.label(alice, "ALICE");
-        vm.label(bob, "BOB");
-        vm.label(charlie, "CHARLIE");
-        vm.label(dave, "DAVE");
-
-        metadata = new MockMetadataRenderer();
-        vm.label(address(metadata), "METADATA");
-
-        MultiDelegateToken impl = new MultiDelegateToken(manager);
-        vm.label(address(impl), "TOKEN_IMPL");
-
-        bytes memory initData = abi.encodeWithSelector(
-            MultiDelegateToken.initialize.selector,
-            new IManager.FounderParams[](0),
-            abi.encode("Gnars", "GNARS", "desc", "img", "base", "contract"),
-            0,
-            address(metadata),
-            auction,
-            manager
-        );
-
-        proxy = new ERC1967Proxy(address(impl), initData);
-        token = MultiDelegateToken(address(proxy));
-        vm.label(address(token), "TOKEN");
-
-        malicious = new MaliciousReentrancy();
-        malicious.setToken(address(token));
-        vm.label(address(malicious), "MALICIOUS");
-
-        vm.prank(manager);
-        token.updateMinters(MinterParams({ minter: auction, allowed: true }));
+        gnars = new MockERC721();
+        token = new MultiDelegateToken(address(gnars));
     }
 
-    // Test: Reentrancy prevention during token transfer
-    function testReentrancyDuringTokenTransfer() public {
-        vm.prank(auction);
-        token.mintTo(owner);
+    function testDelegateUpdatesVotesAndList() public {
+        _mintToOwner(3);
 
         vm.prank(owner);
-        token.delegateTokenIds(alice, singleTokenIdArray(0));
+        token.delegate(alice, 2);
 
-        assertEq(token.getVotes(alice), 1);
-
-        vm.startPrank(alice);
-        vm.expectRevert("INVALID_OWNER");
-        token.transferFrom(alice, owner, 0);
-        vm.stopPrank();
-
-        assertEq(token.getVotes(alice), 1);
-    }
-
-    // Test: Checkpoint bloat prevention
-    function testCheckpointBloatPrevention() public {
-        for (uint256 i = 0; i < 999; i++) {
-            vm.prank(auction);
-            token.mintTo(owner);
-            
-            vm.startPrank(owner);
-            token.delegateTokenIds(alice, singleTokenIdArray(i));
-            vm.stopPrank();
-
-            vm.warp(block.timestamp + 1);
-
-            assertEq(token.getVotes(alice), i + 1);
-        }
-
-        vm.prank(auction);
-        token.mintTo(owner);
-
-        vm.prank(owner);
-        token.delegateTokenIds(alice, singleTokenIdArray(999));
-
-        assertEq(token.getVotes(alice), 1000);
-    }
-
-    // Test: Vote accounting integrity
-    function testVoteUnderflowPrevention() public {
-        vm.prank(auction);
-        token.mintTo(owner);
-
-        vm.prank(owner);
-        token.delegateTokenIds(alice, singleTokenIdArray(0));
-
-        assertEq(token.getVotes(alice), 1);
-
-        vm.prank(owner);
-        token.clearTokenDelegation(singleTokenIdArray(0));
-
-        assertEq(token.getVotes(alice), 0);
+        assertEq(token.delegatedAmount(owner, alice), 2);
+        assertEq(token.totalDelegated(owner), 2);
+        assertEq(token.delegateVotes(alice), 2);
         assertEq(token.getVotes(owner), 1);
+
+        address[] memory delegates = token.getDelegates(owner);
+        assertEq(delegates.length, 1);
+        assertEq(delegates[0], alice);
     }
 
-    // Test: Batch size at MAX_BATCH_SIZE
-    function testBatchSizeAtMaxLimit() public {
-        for (uint256 i = 0; i < 100; i++) {
-            vm.prank(auction);
-            token.mintTo(owner);
-        }
+    function testClearDelegationRemovesDelegate() public {
+        _mintToOwner(3);
 
-        uint256[] memory tokenIds = new uint256[](100);
-        for (uint256 i = 0; i < 100; i++) {
-            tokenIds[i] = i;
-        }
+        vm.startPrank(owner);
+        token.delegate(alice, 2);
+        token.clearDelegation(alice);
+        vm.stopPrank();
+
+        assertEq(token.delegatedAmount(owner, alice), 0);
+        assertEq(token.totalDelegated(owner), 0);
+        assertEq(token.delegateVotes(alice), 0);
+        assertEq(token.getVotes(owner), 3);
+
+        address[] memory delegates = token.getDelegates(owner);
+        assertEq(delegates.length, 0);
+    }
+
+    function testSyncDelegationsReducesFromEnd() public {
+        _mintToOwner(3);
+
+        vm.startPrank(owner);
+        token.delegate(alice, 2);
+        token.delegate(bob, 1);
+        vm.stopPrank();
 
         vm.prank(owner);
-        token.delegateTokenIds(alice, tokenIds);
+        gnars.transferFrom(owner, dave, 2);
 
-        assertEq(token.getVotes(alice), 100);
+        token.syncDelegations(owner);
+
+        assertEq(token.delegatedAmount(owner, alice), 2);
+        assertEq(token.delegatedAmount(owner, bob), 0);
+        assertEq(token.delegateVotes(alice), 2);
+        assertEq(token.delegateVotes(bob), 0);
+        assertEq(token.totalDelegated(owner), 2);
+
+        address[] memory delegates = token.getDelegates(owner);
+        assertEq(delegates.length, 1);
+        assertEq(delegates[0], alice);
     }
 
-    // Test: Batch size exceeds MAX_BATCH_SIZE
-    function testBatchSizeExceedsMaxLimit() public {
-        for (uint256 i = 0; i < 101; i++) {
-            vm.prank(auction);
-            token.mintTo(owner);
-        }
-
-        uint256[] memory tokenIds = new uint256[](101);
-        for (uint256 i = 0; i < 101; i++) {
-            tokenIds[i] = i;
-        }
+    function testSyncDelegationsPartialReduction() public {
+        _mintToOwner(4);
 
         vm.startPrank(owner);
-        vm.expectRevert("BATCH_SIZE_EXCEEDED");
-        token.delegateTokenIds(alice, tokenIds);
+        token.delegate(alice, 3);
+        token.delegate(bob, 1);
         vm.stopPrank();
-    }
-
-    // Test: Mint batch respects MAX_BATCH_SIZE
-    function testMintBatchAtMaxLimit() public {
-        vm.prank(auction);
-        token.mintBatchTo(100, owner);
-
-        assertEq(token.totalSupply(), 100);
-    }
-
-    // Test: Mint batch exceeds MAX_BATCH_SIZE
-    function testMintBatchExceedsMaxLimit() public {
-        vm.prank(auction);
-        vm.expectRevert("BATCH_SIZE_EXCEEDED");
-        token.mintBatchTo(101, owner);
-    }
-
-    // Test: Prevent delegation to zero address
-    function testPreventDelegationToZeroAddress() public {
-        vm.prank(auction);
-        token.mintTo(owner);
 
         vm.startPrank(owner);
-        vm.expectRevert("INVALID_DELEGATE");
-        token.delegateTokenIds(address(0), singleTokenIdArray(0));
+        gnars.transferFrom(owner, dave, 2);
+        gnars.transferFrom(owner, dave, 3);
+        vm.stopPrank();
+
+        token.syncDelegations(owner);
+
+        assertEq(token.delegatedAmount(owner, alice), 2);
+        assertEq(token.delegatedAmount(owner, bob), 0);
+        assertEq(token.delegateVotes(alice), 2);
+        assertEq(token.delegateVotes(bob), 0);
+        assertEq(token.totalDelegated(owner), 2);
+    }
+
+    function testMaxDelegatesLimit() public {
+        _mintToOwner(51);
+
+        vm.startPrank(owner);
+        for (uint256 i = 0; i < 50; i++) {
+            token.delegate(address(uint160(i + 1)), 1);
+        }
+
+        vm.expectRevert(MultiDelegateToken.MAX_DELEGATES_EXCEEDED.selector);
+        token.delegate(address(0xDEAD), 1);
         vm.stopPrank();
     }
 
-    // Test: Unauthorized minter cannot mint
-    function testUnauthorizedMinterCannotMint() public {
-        vm.startPrank(alice);
-        vm.expectRevert("ONLY_AUCTION_OR_MINTER");
-        token.mint();
-        vm.stopPrank();
+    function testInsufficientBalanceReverts() public {
+        _mintToOwner(1);
+
+        vm.prank(owner);
+        vm.expectRevert(MultiDelegateToken.INSUFFICIENT_BALANCE.selector);
+        token.delegate(alice, 2);
     }
 
-    // Test: Unauthorized cannot update minters
-    function testUnauthorizedCannotUpdateMinters() public {
-        vm.startPrank(alice);
-        vm.expectRevert("ONLY_OWNER");
-        token.updateMinters(MinterParams({ minter: bob, allowed: true }));
-        vm.stopPrank();
+    function testInvalidDelegateReverts() public {
+        _mintToOwner(1);
+
+        vm.prank(owner);
+        vm.expectRevert(MultiDelegateToken.INVALID_DELEGATE.selector);
+        token.delegate(address(0), 1);
     }
 
-    // Helper functions
-    function singleTokenIdArray(uint256 id) internal pure returns (uint256[] memory) {
-        uint256[] memory arr = new uint256[](1);
-        arr[0] = id;
-        return arr;
-    }
-
-    function multiTokenIdArray(uint256 a, uint256 b) internal pure returns (uint256[] memory) {
-        uint256[] memory arr = new uint256[](2);
-        arr[0] = a;
-        arr[1] = b;
-        return arr;
+    function _mintToOwner(uint256 count) internal {
+        for (uint256 i = 0; i < count; i++) {
+            gnars.mint(owner, i);
+        }
     }
 }

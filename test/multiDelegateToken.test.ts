@@ -57,9 +57,9 @@ describe("MultiDelegateToken", () => {
 
     await delegation.connect(bob).syncDelegations(owner.address);
 
-    expect(await delegation.delegateVotes(alice.address)).to.equal(0);
-    expect(await delegation.totalDelegated(owner.address)).to.equal(0);
-    expect(await delegation.getVotes(owner.address)).to.equal(1);
+    expect(await delegation.delegateVotes(alice.address)).to.equal(1);
+    expect(await delegation.totalDelegated(owner.address)).to.equal(1);
+    expect(await delegation.getVotes(owner.address)).to.equal(0);
   });
 
   it("enforces a cap on delegate count", async () => {
